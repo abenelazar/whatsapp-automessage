@@ -1,0 +1,7 @@
+Hello {{.name}},
+
+Your coupon code is {{.coupon_code}}.
+Please reach out at {{.support_email}} if you have any questions.
+
+Best,
+Customer Success Team
