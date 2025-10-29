@@ -1,0 +1,45 @@
+# Binaries
+whatsapp-automation
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Logs
+*.log
+automation.log
+
+# Configuration files with sensitive data
+config.yaml
+
+# CSV files with real contact data
+contacts.csv
+completed.csv
+
+# Browser data and session
+chrome-data/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
