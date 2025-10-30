@@ -198,7 +198,7 @@ if not exist "chrome-data" (
 
 REM Create completed.csv if it doesn't exist
 if not exist "completed.csv" (
-    echo name,phone_number,timestamp,template_hash > completed.csv
+    echo name,phone_number,hash,timestamp > completed.csv
     echo Created completed.csv to track sent messages
     echo.
 )
