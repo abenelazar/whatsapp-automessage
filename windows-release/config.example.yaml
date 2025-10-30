@@ -1,0 +1,28 @@
+# WhatsApp Automation Configuration Example
+# Copy this file to config.yaml
+
+browser:
+  # Browser automation settings
+  headless: false              # Set to true to run browser in background
+  user_data_dir: "./chrome-data"  # Directory to store session data
+  qr_timeout_seconds: 60       # Time to wait for QR code scan
+  page_load_timeout: 30        # Timeout for page loads
+
+files:
+  csv_path: "contacts.csv"
+  template_path: "template.txt"
+  completed_csv_path: "completed.csv"
+
+retry:
+  max_retries: 3
+  initial_delay_seconds: 2
+  max_delay_seconds: 30
+  backoff_multiplier: 2
+
+rate_limiting:
+  messages_per_second: 1
+  enabled: true
+
+logging:
+  level: "info" # debug, info, warn, error
+  output_file: "automation.log"

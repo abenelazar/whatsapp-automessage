@@ -1,0 +1,6 @@
+Hello {{.Name}}!
+
+This is a personalized message for you.
+
+Best regards,
+The Team

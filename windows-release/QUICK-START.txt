@@ -1,0 +1,86 @@
+===============================================
+WhatsApp Automation - Windows Quick Start
+===============================================
+
+REQUIREMENTS:
+- Windows 10 or later
+- Google Chrome browser
+- WhatsApp account with phone access
+
+===============================================
+QUICK SETUP (3 STEPS):
+===============================================
+
+1. RUN SETUP
+   - Double-click: setup-windows.bat
+   - Follow the interactive prompts
+   - This creates your config files
+
+2. EDIT YOUR CONTACTS
+   - Open: contacts.csv (with Notepad or Excel)
+   - Add your contacts in format:
+     name,phone_number
+     John Doe,+1234567890
+   - IMPORTANT: Include country code (+1, +44, etc.)
+
+3. EDIT YOUR MESSAGE
+   - Open: template.txt (with Notepad)
+   - Write your message
+   - Use {{.Name}} to personalize with contact's name
+
+===============================================
+USAGE:
+===============================================
+
+TEST (RECOMMENDED FIRST):
+   - Double-click: run-dryrun.bat
+   - Shows what will be sent (doesn't actually send)
+
+SEND MESSAGES:
+   - Double-click: run.bat
+   - Browser opens WhatsApp Web
+   - Scan QR code with your phone
+   - Messages send automatically
+
+===============================================
+FILES INCLUDED:
+===============================================
+
+ESSENTIAL:
+   whatsapp-automation.exe - The application
+   setup-windows.bat - Setup wizard
+   run.bat - Run the application
+   run-dryrun.bat - Test mode
+
+CONFIGURATION:
+   config.example.yaml - Example configuration
+   contacts.example.csv - Example contacts
+
+OPTIONAL:
+   build.bat - Rebuild from source (requires Go)
+   clean.bat - Clean logs and data
+   README.md - Full documentation
+
+===============================================
+TROUBLESHOOTING:
+===============================================
+
+"Chrome not found":
+   - Install Chrome from: https://www.google.com/chrome/
+
+"Config not found":
+   - Run setup-windows.bat first
+
+Messages not sending:
+   - Make sure you scanned QR code
+   - Check phone numbers have country code
+   - Try run-dryrun.bat first to test
+
+===============================================
+SUPPORT:
+===============================================
+
+For issues and questions:
+https://github.com/abenelazar/whatsapp-automessage
+
+===============================================
