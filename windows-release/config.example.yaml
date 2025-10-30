@@ -13,7 +13,7 @@ files:
   csv_path: "contacts.csv"
   template_path: "template.txt"
   completed_csv_path: "completed.csv"
-  image_path: ""  # Optional: Path to image file to send with every message (e.g., "image.jpg")
+  image_path: "lech-lecha.jpg"  # Optional: Path to image file to send with every message
 
 retry:
   max_retries: 3
