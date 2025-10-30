@@ -491,46 +491,86 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		time.Sleep(1 * time.Second)
 	}
 
-	// Now find and use the file input (it should be available whether we clicked the button or not)
-	Log("info", "Looking for file input element...")
-
-	fileInputSelectors := []string{
-		`input[type="file"][accept*="image"]`,
-		`input[type="file"][accept*="video"]`,
-		`input[type="file"]`,
-		`//input[@type='file' and contains(@accept, 'image')]`,
-		`//input[@type='file' and contains(@accept, 'video')]`,
-		`//input[@type='file']`,
+	// Click on "Photos & Videos" option (NOT stickers) to ensure proper attachment mode
+	Log("info", "Looking for 'Photos & Videos' option in attachment menu...")
+	photoVideoSelectors := []string{
+		`//span[contains(text(), 'Photos & videos')]`,
+		`//li[@role='listitem']//span[contains(text(), 'Photos')]`,
+		`//div[@title='Photos & videos']`,
+		`//button[@aria-label='Photos & videos']`,
+		`input[type="file"][accept*="image"]`, // Direct file input as fallback
 	}
 
-	var fileInputFound bool
-	for i, selector := range fileInputSelectors {
-		Log("info", fmt.Sprintf("Trying file input selector %d/%d: %s", i+1, len(fileInputSelectors), selector))
+	var photoVideoClicked bool
+	for i, selector := range photoVideoSelectors {
+		Log("info", fmt.Sprintf("Trying photos/videos selector %d/%d: %s", i+1, len(photoVideoSelectors), selector))
 
 		// Determine if it's XPath or CSS
 		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
 
-		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-		var err error
-		if bySearch {
-			err = chromedp.Run(ctx, chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.BySearch))
-		} else {
+		// If it's a file input, use SetUploadFiles directly
+		if strings.Contains(selector, "input[type=\"file\"]") {
+			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
 			err = chromedp.Run(ctx, chromedp.SetUploadFiles(selector, []string{absImagePath}))
+			cancel()
+			if err == nil {
+				photoVideoClicked = true
+				Log("info", fmt.Sprintf("✓ Successfully uploaded via direct file input: %s", selector))
+				break
+			}
+			continue
+		}
+
+		// Otherwise, click the menu option then look for file input
+		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
+		var clickErr error
+		if bySearch {
+			clickErr = chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
+		} else {
+			clickErr = chromedp.Run(ctx, chromedp.Click(selector))
 		}
 		cancel()
 
-		if err == nil {
-			fileInputFound = true
-			Log("info", fmt.Sprintf("✓ Successfully uploaded image using selector: %s", selector))
-			break
+		if clickErr == nil {
+			Log("info", fmt.Sprintf("✓ Clicked photos/videos option: %s", selector))
+			time.Sleep(1 * time.Second)
+
+			// Now try to find and use the file input for images
+			imageInputSelectors := []string{
+				`input[type="file"][accept*="image"]`,
+				`input[type="file"][accept*="video"]`,
+				`//input[@type='file' and contains(@accept, 'image')]`,
+			}
+
+			for _, inputSel := range imageInputSelectors {
+				inputBySearch := strings.HasPrefix(inputSel, "//")
+				ctx2, cancel2 := context.WithTimeout(c.ctx, 2*time.Second)
+				var uploadErr error
+				if inputBySearch {
+					uploadErr = chromedp.Run(ctx2, chromedp.SetUploadFiles(inputSel, []string{absImagePath}, chromedp.BySearch))
+				} else {
+					uploadErr = chromedp.Run(ctx2, chromedp.SetUploadFiles(inputSel, []string{absImagePath}))
+				}
+				cancel2()
+
+				if uploadErr == nil {
+					photoVideoClicked = true
+					Log("info", fmt.Sprintf("✓ Successfully uploaded image using input: %s", inputSel))
+					break
+				}
+			}
+
+			if photoVideoClicked {
+				break
+			}
 		} else {
-			Log("debug", fmt.Sprintf("✗ File input selector %d failed: %v", i+1, err))
+			Log("debug", fmt.Sprintf("✗ Photos/videos selector %d failed: %v", i+1, clickErr))
 		}
 	}
 
-	if !fileInputFound {
-		Log("error", "Could not find file input element after trying all selectors")
-		return fmt.Errorf("could not find file input for image upload")
+	if !photoVideoClicked {
+		Log("error", "Could not upload image via photos/videos option")
+		return fmt.Errorf("could not find photos/videos option or file input for image upload")
 	}
 
 	// Wait for image to upload and preview to appear
