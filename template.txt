@@ -1,1 +1,6 @@
-Hello {{.Name}}! This is an automated message! Value is: {{.Value}}
+Hello {{.Name}}!
+
+I wanted to let you know that your current value is {{.Value}}.
+
+Best regards,
+The Team

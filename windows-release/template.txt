@@ -1,6 +1,6 @@
 Hello {{.Name}}!
 
-This is a personalized message for you.
+I wanted to let you know that your current value is {{.Value}}.
 
 Best regards,
 The Team
