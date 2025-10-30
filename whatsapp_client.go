@@ -360,46 +360,96 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
 	normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
 
+	// Try Method 1: Clipboard paste (preferred method)
+	Log("debug", "Method 1: Trying clipboard paste...")
+	var textPasted bool
+
 	// Copy message to clipboard using JavaScript
-	Log("debug", "Copying message to clipboard...")
 	jsCode := fmt.Sprintf(`navigator.clipboard.writeText(%s)`, escapeJSString(normalizedMessage))
 	err = chromedp.Run(c.ctx,
 		chromedp.Evaluate(jsCode, nil),
 		chromedp.Sleep(200*time.Millisecond),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to copy message to clipboard: %w", err)
-	}
-
-	// Paste the message using Ctrl+V (Cmd+V on Mac)
-	Log("debug", "Pasting message from clipboard...")
-	err = chromedp.Run(c.ctx,
-		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
-		chromedp.Sleep(500*time.Millisecond),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to paste message: %w", err)
-	}
-
-	// Wait to ensure message is fully pasted
-	Log("debug", "Message paste complete, waiting before sending...")
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify that text was actually pasted into the input
-	var inputText string
-	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
-	)
-	if err != nil {
-		Log("warn", fmt.Sprintf("Could not verify text was pasted: %v", err))
-	} else if len(inputText) == 0 {
-		c.takeScreenshot(fmt.Sprintf("text_02_paste_failed_%s.png", cleanNumberForFile))
-		Log("error", "Text was NOT pasted into input box - input is empty!")
-		return fmt.Errorf("failed to paste message into input box (input is empty)")
+		Log("warn", fmt.Sprintf("Failed to copy to clipboard: %v, will try direct input", err))
 	} else {
-		Log("info", fmt.Sprintf("Verified text pasted successfully (%d characters in input)", len(inputText)))
-		c.takeScreenshot(fmt.Sprintf("text_02_text_pasted_%s.png", cleanNumberForFile))
+		// Paste the message using Ctrl+V (Cmd+V on Mac)
+		err = chromedp.Run(c.ctx,
+			chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
+			chromedp.Sleep(500*time.Millisecond),
+		)
+		if err != nil {
+			Log("warn", fmt.Sprintf("Failed to paste from clipboard: %v, will try direct input", err))
+		} else {
+			// Verify that text was pasted
+			var inputText string
+			chromedp.Run(c.ctx,
+				chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
+			)
+			if len(inputText) > 0 {
+				textPasted = true
+				Log("info", fmt.Sprintf("✓ Clipboard paste successful (%d characters)", len(inputText)))
+			}
+		}
 	}
+
+	// Method 2: Direct DOM manipulation (fallback)
+	if !textPasted {
+		Log("warn", "Clipboard paste failed or empty, trying direct DOM manipulation...")
+
+		// Use JavaScript to directly insert text into the contenteditable div
+		escapedMsg := escapeJSString(normalizedMessage)
+		directInputJS := fmt.Sprintf(`
+			(function() {
+				const inputBox = document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
+				                 document.querySelector('div[contenteditable="true"][role="textbox"]');
+				if (!inputBox) return false;
+
+				// Set the text content
+				inputBox.textContent = %s;
+
+				// Trigger input event to notify WhatsApp
+				const inputEvent = new Event('input', { bubbles: true });
+				inputBox.dispatchEvent(inputEvent);
+
+				// Focus the input
+				inputBox.focus();
+
+				return true;
+			})()
+		`, escapedMsg)
+
+		var directInputSuccess bool
+		err = chromedp.Run(c.ctx,
+			chromedp.Evaluate(directInputJS, &directInputSuccess),
+			chromedp.Sleep(500*time.Millisecond),
+		)
+
+		if err != nil || !directInputSuccess {
+			c.takeScreenshot(fmt.Sprintf("text_02_paste_failed_%s.png", cleanNumberForFile))
+			Log("error", "Both clipboard paste AND direct input failed!")
+			return fmt.Errorf("failed to input message using both clipboard and direct methods")
+		}
+
+		Log("info", "✓ Direct DOM input successful")
+		textPasted = true
+	}
+
+	// Final verification
+	time.Sleep(300 * time.Millisecond)
+	var finalInputText string
+	chromedp.Run(c.ctx,
+		chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &finalInputText),
+	)
+
+	if len(finalInputText) == 0 {
+		c.takeScreenshot(fmt.Sprintf("text_02_input_verification_failed_%s.png", cleanNumberForFile))
+		Log("error", "Final verification: input is still empty!")
+		return fmt.Errorf("text input failed - input box is empty after all methods")
+	}
+
+	Log("info", fmt.Sprintf("✓ Final verification: %d characters in input box", len(finalInputText)))
+	c.takeScreenshot(fmt.Sprintf("text_02_text_ready_%s.png", cleanNumberForFile))
 
 	// Send the message by pressing Enter (without Shift modifier)
 	Log("debug", "Sending message with Enter key...")
