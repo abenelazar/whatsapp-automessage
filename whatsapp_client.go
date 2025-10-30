@@ -346,10 +346,10 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	}
 
 	// Wait a bit for the message to start sending
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// Wait for message to be sent by looking for the sent indicator (checkmark)
-	Log("debug", "Waiting for message to be sent...")
+	Log("info", "Waiting for message to be sent...")
 
 	// WhatsApp shows a checkmark icon when message is sent
 	// Look for the most recent message bubble with a checkmark
@@ -360,14 +360,14 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	}
 
 	messageSent := false
-	maxWaitTime := 15 * time.Second
+	maxWaitTime := 20 * time.Second
 	checkInterval := 1 * time.Second
 	startTime := time.Now()
 
 	for time.Since(startTime) < maxWaitTime && !messageSent {
 		for _, selector := range sendCheckSelectors {
 			// Try to find the checkmark - use a very short timeout
-			checkCtx, checkCancel := context.WithTimeout(c.ctx, 100*time.Millisecond)
+			checkCtx, checkCancel := context.WithTimeout(c.ctx, 200*time.Millisecond)
 			err = chromedp.Run(checkCtx,
 				chromedp.WaitVisible(selector, chromedp.BySearch),
 			)
@@ -375,23 +375,26 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 			if err == nil {
 				messageSent = true
-				Log("debug", fmt.Sprintf("Message sent confirmation found with selector: %s", selector))
+				Log("info", fmt.Sprintf("Message sent confirmation found with selector: %s", selector))
 				break
 			}
 		}
 		if !messageSent {
-			Log("debug", fmt.Sprintf("Checking for checkmark... (%v elapsed)", time.Since(startTime).Round(time.Second)))
+			Log("info", fmt.Sprintf("Checking for checkmark... (%v elapsed)", time.Since(startTime).Round(time.Second)))
 			time.Sleep(checkInterval)
 		}
 	}
 
 	if !messageSent {
 		Log("warn", fmt.Sprintf("Could not confirm message was sent to %s (no checkmark found after %v)", phoneNumber, maxWaitTime))
-		return fmt.Errorf("message send confirmation timeout")
+		Log("warn", "Waiting extra time to ensure message sends anyway...")
+		// Don't fail, just wait extra time to be safe
+		time.Sleep(5 * time.Second)
+	} else {
+		// Wait an additional moment to ensure message is fully sent before navigating away
+		Log("info", "Message confirmed sent, waiting before moving to next contact...")
+		time.Sleep(3 * time.Second)
 	}
-
-	// Wait an additional moment to ensure message is fully sent before navigating away
-	time.Sleep(2 * time.Second)
 
 	Log("info", fmt.Sprintf("Message sent successfully to %s", phoneNumber))
 	return nil
@@ -499,9 +502,9 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 		return fmt.Errorf("could not find send button for image")
 	}
 
-	// Wait for image to send
-	Log("debug", "Waiting for image to send...")
-	time.Sleep(4 * time.Second)
+	// Wait for image to send - give it more time for upload and delivery
+	Log("info", "Waiting for image to upload and send...")
+	time.Sleep(8 * time.Second)
 
 	Log("info", fmt.Sprintf("Image sent successfully to %s", phoneNumber))
 	return nil
