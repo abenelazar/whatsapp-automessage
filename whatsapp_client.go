@@ -446,56 +446,84 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 
 	time.Sleep(2 * time.Second)
 
-	// Find the hidden file input directly - WhatsApp Web has these in the DOM
-	// File inputs are typically hidden, so we don't use NodeVisible
+	// Click the attachment button to open the attachment menu
+	Log("info", "Looking for attachment button...")
+	attachmentSelectors := []string{
+		`//div[@title='Attach']`,
+		`//button[@aria-label='Attach']`,
+		`//div[@aria-label='Attach']`,
+		`//span[@data-icon='plus']`,
+		`//span[@data-icon='attach-menu-plus']`,
+		`div[title='Attach']`,
+		`button[aria-label='Attach']`,
+	}
+
+	var attachmentClicked bool
+	for i, selector := range attachmentSelectors {
+		Log("info", fmt.Sprintf("Trying attachment selector %d/%d: %s", i+1, len(attachmentSelectors), selector))
+
+		// Determine if it's XPath or CSS
+		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
+
+		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
+		var err error
+		if bySearch {
+			err = chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
+		} else {
+			err = chromedp.Run(ctx, chromedp.Click(selector))
+		}
+		cancel()
+
+		if err == nil {
+			attachmentClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked attachment button with selector: %s", selector))
+			break
+		} else {
+			Log("debug", fmt.Sprintf("✗ Attachment selector %d failed: %v", i+1, err))
+		}
+	}
+
+	if !attachmentClicked {
+		Log("warn", "Could not click attachment button, trying direct file input access...")
+	} else {
+		// Wait for the attachment menu to appear
+		time.Sleep(1 * time.Second)
+	}
+
+	// Now find and use the file input (it should be available whether we clicked the button or not)
 	Log("info", "Looking for file input element...")
 
-	// First try CSS selectors (don't require NodeVisible)
-	cssSelectors := []string{
+	fileInputSelectors := []string{
 		`input[type="file"][accept*="image"]`,
 		`input[type="file"][accept*="video"]`,
 		`input[type="file"]`,
+		`//input[@type='file' and contains(@accept, 'image')]`,
+		`//input[@type='file' and contains(@accept, 'video')]`,
+		`//input[@type='file']`,
 	}
 
 	var fileInputFound bool
-	for i, selector := range cssSelectors {
-		Log("info", fmt.Sprintf("Trying CSS selector %d/%d: %s", i+1, len(cssSelectors), selector))
+	for i, selector := range fileInputSelectors {
+		Log("info", fmt.Sprintf("Trying file input selector %d/%d: %s", i+1, len(fileInputSelectors), selector))
+
+		// Determine if it's XPath or CSS
+		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
+
 		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-		err = chromedp.Run(ctx,
-			chromedp.SetUploadFiles(selector, []string{absImagePath}),
-		)
+		var err error
+		if bySearch {
+			err = chromedp.Run(ctx, chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.BySearch))
+		} else {
+			err = chromedp.Run(ctx, chromedp.SetUploadFiles(selector, []string{absImagePath}))
+		}
 		cancel()
+
 		if err == nil {
 			fileInputFound = true
-			Log("info", fmt.Sprintf("✓ Successfully uploaded image using CSS selector: %s", selector))
+			Log("info", fmt.Sprintf("✓ Successfully uploaded image using selector: %s", selector))
 			break
 		} else {
-			Log("debug", fmt.Sprintf("✗ CSS selector %d failed: %v", i+1, err))
-		}
-	}
-
-	// If CSS didn't work, try XPath selectors
-	if !fileInputFound {
-		xpathSelectors := []string{
-			`//input[@type='file' and contains(@accept, 'image')]`,
-			`//input[@type='file' and contains(@accept, 'video')]`,
-			`//input[@type='file']`,
-		}
-
-		for i, selector := range xpathSelectors {
-			Log("info", fmt.Sprintf("Trying XPath selector %d/%d: %s", i+1, len(xpathSelectors), selector))
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-			err = chromedp.Run(ctx,
-				chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.BySearch),
-			)
-			cancel()
-			if err == nil {
-				fileInputFound = true
-				Log("info", fmt.Sprintf("✓ Successfully uploaded image using XPath selector: %s", selector))
-				break
-			} else {
-				Log("debug", fmt.Sprintf("✗ XPath selector %d failed: %v", i+1, err))
-			}
+			Log("debug", fmt.Sprintf("✗ File input selector %d failed: %v", i+1, err))
 		}
 	}
 
