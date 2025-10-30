@@ -208,10 +208,13 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 	Log("debug", fmt.Sprintf("Opening chat for %s", phoneNumber))
 
-	// Send image first if configured
+	// Send image first if configured (but don't fail the whole message if image fails)
 	if c.config.Files.ImagePath != "" {
 		if err := c.sendImage(phoneNumber, cleanNumber, chatURL); err != nil {
-			return fmt.Errorf("failed to send image: %w", err)
+			Log("warn", fmt.Sprintf("Failed to send image to %s: %v", phoneNumber, err))
+			Log("warn", "Continuing with text message only...")
+		} else {
+			Log("info", "Image sent successfully, now sending text message...")
 		}
 	}
 
@@ -421,20 +424,50 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 	err = chromedp.Run(c.ctx,
 		chromedp.Evaluate(`window.onbeforeunload = null;`, nil),
 		chromedp.Navigate(chatURL),
-		chromedp.Sleep(3*time.Second),
+		chromedp.Sleep(4*time.Second),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to navigate to chat for image: %w", err)
 	}
-	Log("info", "Chat opened, looking for attachment button...")
+
+	// Wait for chat to fully load by checking for message input
+	Log("info", "Waiting for chat to load...")
+	inputSelectors := []string{
+		`//div[@contenteditable='true'][@data-tab='10']`,
+		`//div[@contenteditable='true'][@role='textbox']`,
+		`//div[@contenteditable='true']`,
+	}
+
+	chatLoaded := false
+	for _, selector := range inputSelectors {
+		ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(selector, chromedp.BySearch),
+		)
+		cancel()
+		if err == nil {
+			chatLoaded = true
+			Log("info", "Chat loaded successfully")
+			break
+		}
+	}
+
+	if !chatLoaded {
+		Log("warn", "Could not confirm chat loaded, proceeding anyway...")
+	}
+
+	time.Sleep(2 * time.Second)
+	Log("info", "Looking for attachment button...")
 
 	// Click the attachment (paperclip) button
 	attachmentSelectors := []string{
 		`//div[@title='Attach']`,
+		`//button[@aria-label='Attach']`,
+		`//span[@data-icon='attach-menu-plus']`,
 		`//span[@data-icon='plus']`,
 		`//span[@data-icon='clip']`,
 		`//div[contains(@aria-label, 'Attach')]`,
-		`//button[@aria-label='Attach']`,
+		`//div[@role='button' and @title='Attach']`,
 	}
 
 	var attachmentClicked bool
