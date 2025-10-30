@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
 )
 
@@ -740,81 +739,62 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 3: Paste the image using right-click context menu
-	Log("info", "Step 3: Right-clicking to paste image from clipboard...")
+	// Step 3: Paste the image using JavaScript paste event
+	Log("info", "Step 3: Triggering paste event on message input...")
 
-	// Find the input box again for right-click
-	var usedSelector string
-	for _, selector := range messageInputSelectors {
-		err = chromedp.Run(c.ctx,
-			chromedp.WaitVisible(selector, chromedp.BySearch),
-		)
-		if err == nil {
-			usedSelector = selector
-			break
+	// Use JavaScript to trigger a paste event on the focused input
+	// This simulates what happens when user pastes from clipboard
+	pasteJS := `
+(function() {
+	try {
+		// Get the focused element (should be our input box)
+		const el = document.activeElement;
+		if (!el) {
+			console.error('No active element');
+			return false;
 		}
-	}
 
-	if usedSelector == "" {
-		c.takeScreenshot(fmt.Sprintf("03_input_not_found_for_paste_%s.png", cleanNumber))
-		return fmt.Errorf("could not find message input for paste")
-	}
+		// Create and dispatch a paste event
+		const pasteEvent = new ClipboardEvent('paste', {
+			bubbles: true,
+			cancelable: true,
+			composed: true
+		});
 
-	// Right-click on the input box
-	Log("info", "Right-clicking on message input...")
-	var nodes []*cdp.Node
+		el.dispatchEvent(pasteEvent);
+		return true;
+	} catch (e) {
+		console.error('Paste event error:', e);
+		return false;
+	}
+})()
+`
+
+	var pasteTriggered bool
 	err = chromedp.Run(c.ctx,
-		chromedp.Nodes(usedSelector, &nodes, chromedp.BySearch),
+		chromedp.Evaluate(pasteJS, &pasteTriggered),
 	)
-	if err != nil || len(nodes) == 0 {
-		Log("error", fmt.Sprintf("Failed to find node for right-click: %v", err))
-		c.takeScreenshot(fmt.Sprintf("03_node_not_found_%s.png", cleanNumber))
-		return fmt.Errorf("failed to find node for right-click: %w", err)
-	}
 
-	err = chromedp.Run(c.ctx,
-		chromedp.MouseClickNode(nodes[0], chromedp.ButtonRight),
-	)
-	if err != nil {
-		Log("error", fmt.Sprintf("Failed to right-click: %v", err))
-		c.takeScreenshot(fmt.Sprintf("03_right_click_failed_%s.png", cleanNumber))
-		return fmt.Errorf("failed to right-click on input: %w", err)
-	}
+	if err != nil || !pasteTriggered {
+		Log("warn", fmt.Sprintf("JavaScript paste event failed: %v, triggered: %v", err, pasteTriggered))
+		Log("info", "Trying keyboard shortcut fallback...")
 
-	time.Sleep(500 * time.Millisecond)
-	c.takeScreenshot(fmt.Sprintf("03a_context_menu_%s.png", cleanNumber))
-
-	// Click the Paste option in the context menu
-	Log("info", "Clicking Paste in context menu...")
-	pasteMenuSelectors := []string{
-		`//div[@role='menuitem'][contains(., 'Paste')]`,
-		`//div[contains(@class, 'menu')][contains(., 'Paste')]`,
-		`//*[contains(text(), 'Paste')]`,
-		`//div[text()='Paste']`,
-	}
-
-	var pasteClicked bool
-	for _, selector := range pasteMenuSelectors {
-		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-		err = chromedp.Run(ctx,
-			chromedp.Click(selector, chromedp.BySearch),
-		)
-		cancel()
-		if err == nil {
-			pasteClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked Paste menu item: %s", selector))
-			break
+		// Fallback: Try actual keyboard shortcut via osascript
+		var pasteCmd *exec.Cmd
+		if runtime.GOOS == "darwin" {
+			pasteScript := `tell application "Google Chrome" to activate
+delay 0.3
+tell application "System Events"
+	keystroke "v" using command down
+end tell`
+			pasteCmd = exec.Command("osascript", "-e", pasteScript)
+			pasteOutput, err := pasteCmd.CombinedOutput()
+			if err != nil {
+				Log("error", fmt.Sprintf("Keyboard shortcut failed: %v, output: %s", err, string(pasteOutput)))
+			}
 		}
-	}
-
-	if !pasteClicked {
-		Log("warn", "Could not find Paste menu item, trying Escape and Cmd+V fallback...")
-		// Press Escape to close menu and try keyboard paste
-		chromedp.Run(c.ctx, chromedp.KeyEvent("\x1b")) // Escape key
-		time.Sleep(200 * time.Millisecond)
-
-		// Try chromedp KeyEvent as last resort
-		chromedp.Run(c.ctx, chromedp.KeyEvent("v", chromedp.KeyModifiers(2)))
+	} else {
+		Log("info", "✓ Paste event triggered successfully")
 	}
 
 	time.Sleep(3 * time.Second)
