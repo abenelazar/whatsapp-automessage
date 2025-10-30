@@ -83,7 +83,6 @@ func findChromePath() string {
 	if runtime.GOOS == "windows" {
 		// Common Chrome installation paths on Windows
 		paths := []string{
-			"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\chrome.exe",
 			"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
 			"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
 			os.Getenv("LOCALAPPDATA") + "\\Google\\Chrome\\Application\\chrome.exe",
