@@ -666,44 +666,20 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Step 1: Click the attachment (+) button
-	Log("info", "Step 1: Clicking attachment button...")
-	attachmentSelectors := []string{
-		`//span[@data-icon='plus']`,
-		`//span[@data-icon='plus-rounded']`,
-		`//div[@title='Attach']`,
-		`//button[@aria-label='Attach']`,
-	}
-
-	var attachmentClicked bool
-	for _, selector := range attachmentSelectors {
-		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
-		if err == nil {
-			attachmentClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked attachment button: %s", selector))
-			break
-		}
-		Log("debug", fmt.Sprintf("Attachment button selector failed: %s", selector))
-	}
-
-	if !attachmentClicked {
-		Log("warn", "Could not click attachment button, will try direct file input")
-	} else {
-		time.Sleep(1 * time.Second)
-		c.takeScreenshot(fmt.Sprintf("02_attachment_menu_%s.png", cleanNumber))
-	}
-
-	// Step 2: Find and set file on the hidden file input element
-	Log("info", "Step 2: Finding file input element...")
+	// Step 1: Find and set file directly on the hidden file input element
+	// Skip clicking attachment button - file input should already exist
+	Log("info", "Step 1: Finding file input element for direct upload...")
 
 	// WhatsApp uses hidden file input elements for uploads
+	// Try multiple selectors to find the right one
 	fileInputSelectors := []string{
 		`input[type='file'][accept*='image']`,
-		`input[type='file'][accept*='*']`,
+		`input[type='file'][accept='image/*,video/mp4,video/3gpp,video/quicktime']`,
 		`input[type='file']`,
 	}
 
 	var fileInputSet bool
+	var usedSelector string
 	for _, selector := range fileInputSelectors {
 		Log("debug", fmt.Sprintf("Trying file input selector: %s", selector))
 		err = chromedp.Run(c.ctx,
@@ -711,6 +687,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		)
 		if err == nil {
 			fileInputSet = true
+			usedSelector = selector
 			Log("info", fmt.Sprintf("✓ Set file on input element: %s", selector))
 			break
 		}
@@ -718,12 +695,58 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	if !fileInputSet {
-		c.takeScreenshot(fmt.Sprintf("02_file_input_not_found_%s.png", cleanNumber))
-		Log("error", "Could not find file input element")
-		return fmt.Errorf("could not find file input element for image upload")
+		// Last resort: Use JavaScript to find and trigger file input
+		Log("warn", "Standard file input not found, trying JavaScript approach...")
+		setFileJS := fmt.Sprintf(`
+(function() {
+	const inputs = document.querySelectorAll('input[type="file"]');
+	if (inputs.length === 0) return false;
+
+	// Find the image upload input (usually has accept attribute with image)
+	for (let input of inputs) {
+		const accept = input.getAttribute('accept') || '';
+		if (accept.includes('image')) {
+			input.click();
+			return true;
+		}
 	}
 
-	time.Sleep(2 * time.Second)
+	// If no image-specific input, use first file input
+	inputs[0].click();
+	return true;
+})()
+`)
+		var clicked bool
+		chromedp.Run(c.ctx, chromedp.Evaluate(setFileJS, &clicked))
+
+		if !clicked {
+			c.takeScreenshot(fmt.Sprintf("02_file_input_not_found_%s.png", cleanNumber))
+			Log("error", "Could not find any file input element")
+			return fmt.Errorf("could not find file input element for image upload")
+		}
+
+		time.Sleep(1 * time.Second)
+
+		// Try setting file again after clicking
+		for _, selector := range fileInputSelectors {
+			err = chromedp.Run(c.ctx,
+				chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.ByQuery),
+			)
+			if err == nil {
+				fileInputSet = true
+				Log("info", fmt.Sprintf("✓ Set file after JS click: %s", selector))
+				break
+			}
+		}
+
+		if !fileInputSet {
+			c.takeScreenshot(fmt.Sprintf("02_file_still_not_set_%s.png", cleanNumber))
+			return fmt.Errorf("file input found but could not set file")
+		}
+	}
+
+	Log("info", fmt.Sprintf("File upload initiated with selector: %s", usedSelector))
+	time.Sleep(3 * time.Second)
 
 	// Wait for image preview to appear
 	Log("info", "Waiting for image preview to load...")
