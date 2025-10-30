@@ -723,17 +723,36 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 3: Paste the image using Cmd/Ctrl+V
+	// Step 3: Paste the image using real keyboard automation (not chromedp simulation)
 	Log("info", "Step 3: Pasting image from clipboard with Cmd/Ctrl+V...")
-	err = chromedp.Run(c.ctx,
-		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // Modifier 2 = Cmd (Mac) or Ctrl (Windows)
-		chromedp.Sleep(3*time.Second),
-	)
 
-	if err != nil {
-		c.takeScreenshot(fmt.Sprintf("03_paste_failed_%s.png", cleanNumber))
-		return fmt.Errorf("failed to paste image: %w", err)
+	var pasteCmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		// macOS: Use osascript to send real Cmd+V keypress
+		// This works better than chromedp's simulated KeyEvent
+		pasteScript := `tell application "Google Chrome" to activate
+delay 0.2
+tell application "System Events"
+	keystroke "v" using command down
+end tell`
+		pasteCmd = exec.Command("osascript", "-e", pasteScript)
+	} else if runtime.GOOS == "windows" {
+		// Windows: Use PowerShell with SendKeys
+		psScript := `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^v")`
+		pasteCmd = exec.Command("powershell", "-Command", psScript)
+	} else {
+		Log("error", "Unsupported OS for keyboard automation")
+		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
+
+	pasteOutput, err := pasteCmd.CombinedOutput()
+	if err != nil {
+		Log("error", fmt.Sprintf("Failed to send paste keystroke: %v, output: %s", err, string(pasteOutput)))
+		c.takeScreenshot(fmt.Sprintf("03_paste_failed_%s.png", cleanNumber))
+		return fmt.Errorf("failed to send paste keystroke: %w", err)
+	}
+
+	time.Sleep(3 * time.Second)
 
 	// Wait for image preview to appear
 	Log("info", "Waiting for image preview to load...")
