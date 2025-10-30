@@ -236,6 +236,17 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		return fmt.Errorf("failed to navigate to chat: %w", err)
 	}
 
+	// Wait for chat to fully load and "Starting chat" dialog to disappear
+	Log("debug", "Waiting for chat to fully load...")
+	time.Sleep(2 * time.Second)
+
+	// Count existing messages before we send (to verify new message was sent)
+	var messageCountBefore int
+	chromedp.Run(c.ctx,
+		chromedp.Evaluate(`document.querySelectorAll('div[data-pre-plain-text]').length`, &messageCountBefore),
+	)
+	Log("debug", fmt.Sprintf("Message count before sending: %d", messageCountBefore))
+
 	// Wait for the message input box to be visible
 	Log("debug", "Waiting for message input box...")
 
@@ -328,6 +339,20 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	Log("debug", "Message paste complete, waiting before sending...")
 	time.Sleep(500 * time.Millisecond)
 
+	// Verify that text was actually pasted into the input
+	var inputText string
+	err = chromedp.Run(c.ctx,
+		chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
+	)
+	if err != nil {
+		Log("warn", fmt.Sprintf("Could not verify text was pasted: %v", err))
+	} else if len(inputText) == 0 {
+		Log("error", "Text was NOT pasted into input box - input is empty!")
+		return fmt.Errorf("failed to paste message into input box (input is empty)")
+	} else {
+		Log("info", fmt.Sprintf("Verified text pasted successfully (%d characters in input)", len(inputText)))
+	}
+
 	// Send the message by pressing Enter (without Shift modifier)
 	Log("debug", "Sending message with Enter key...")
 	err = chromedp.Run(c.ctx,
@@ -340,53 +365,39 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	// Wait a bit for the message to start sending
 	time.Sleep(3 * time.Second)
 
-	// Wait for message to be sent by looking for the sent indicator (checkmark)
-	Log("info", "Waiting for message to be sent...")
-
-	// WhatsApp shows a checkmark icon when message is sent
-	// Look for the most recent message bubble with a checkmark
-	sendCheckSelectors := []string{
-		`(//span[@data-icon='msg-check'])[last()]`,     // Single checkmark (sent) - last one
-		`(//span[@data-icon='msg-dblcheck'])[last()]`,  // Double checkmark (delivered) - last one
-		`(//span[@data-icon='msg-dblcheck-ack'])[last()]`, // Blue double checkmark (read) - last one
-	}
-
-	messageSent := false
+	// Verify that a new message was actually sent by checking message count
+	Log("info", "Verifying message was sent...")
+	var messageCountAfter int
 	maxWaitTime := 20 * time.Second
 	checkInterval := 1 * time.Second
 	startTime := time.Now()
+	messageSent := false
 
 	for time.Since(startTime) < maxWaitTime && !messageSent {
-		for _, selector := range sendCheckSelectors {
-			// Try to find the checkmark - use a very short timeout
-			checkCtx, checkCancel := context.WithTimeout(c.ctx, 200*time.Millisecond)
-			err = chromedp.Run(checkCtx,
-				chromedp.WaitVisible(selector, chromedp.BySearch),
-			)
-			checkCancel()
+		chromedp.Run(c.ctx,
+			chromedp.Evaluate(`document.querySelectorAll('div[data-pre-plain-text]').length`, &messageCountAfter),
+		)
 
-			if err == nil {
-				messageSent = true
-				Log("info", fmt.Sprintf("Message sent confirmation found with selector: %s", selector))
-				break
-			}
+		if messageCountAfter > messageCountBefore {
+			messageSent = true
+			Log("info", fmt.Sprintf("✓ New message detected! Count increased from %d to %d", messageCountBefore, messageCountAfter))
+			break
 		}
+
 		if !messageSent {
-			Log("info", fmt.Sprintf("Checking for checkmark... (%v elapsed)", time.Since(startTime).Round(time.Second)))
+			Log("info", fmt.Sprintf("Waiting for new message to appear... (%v elapsed, count still %d)", time.Since(startTime).Round(time.Second), messageCountAfter))
 			time.Sleep(checkInterval)
 		}
 	}
 
 	if !messageSent {
-		Log("warn", fmt.Sprintf("Could not confirm message was sent to %s (no checkmark found after %v)", phoneNumber, maxWaitTime))
-		Log("warn", "Waiting extra time to ensure message sends anyway...")
-		// Don't fail, just wait extra time to be safe
-		time.Sleep(5 * time.Second)
-	} else {
-		// Wait an additional moment to ensure message is fully sent before navigating away
-		Log("info", "Message confirmed sent, waiting before moving to next contact...")
-		time.Sleep(3 * time.Second)
+		Log("error", fmt.Sprintf("Message was NOT sent to %s - message count did not increase after %v", phoneNumber, maxWaitTime))
+		return fmt.Errorf("message was not sent - no new message bubble appeared in chat")
 	}
+
+	// Wait for checkmark to confirm message is being delivered
+	Log("info", "Waiting for delivery confirmation...")
+	time.Sleep(3 * time.Second)
 
 	Log("info", fmt.Sprintf("Message sent successfully to %s", phoneNumber))
 	return nil
@@ -455,6 +466,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		`//div[@aria-label='Attach']`,
 		`//span[@data-icon='plus']`,
 		`//span[@data-icon='attach-menu-plus']`,
+		`//span[@data-icon='plus']/parent::div[@role='button']`,
 		`div[title='Attach']`,
 		`button[aria-label='Attach']`,
 	}
@@ -466,7 +478,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		// Determine if it's XPath or CSS
 		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
 
-		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
+		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
 		var err error
 		if bySearch {
 			err = chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
@@ -485,55 +497,38 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	if !attachmentClicked {
-		Log("warn", "Could not click attachment button, trying direct file input access...")
-	} else {
-		// Wait for the attachment menu to appear
-		time.Sleep(1 * time.Second)
+		Log("error", "Could not click attachment button!")
+		return fmt.Errorf("could not find or click attachment button")
 	}
+
+	// Wait for the attachment menu to appear
+	Log("info", "Waiting for attachment menu to appear...")
+	time.Sleep(2 * time.Second)
 
 	// Click on "Photos & Videos" option (NOT stickers) to ensure proper attachment mode
 	Log("info", "Looking for 'Photos & Videos' option in attachment menu...")
 	photoVideoSelectors := []string{
 		`//span[contains(text(), 'Photos & videos')]`,
+		`//span[contains(text(), 'Photos & Videos')]`,
 		`//li[@role='listitem']//span[contains(text(), 'Photos')]`,
 		`//div[@title='Photos & videos']`,
 		`//button[@aria-label='Photos & videos']`,
-		`input[type="file"][accept*="image"]`, // Direct file input as fallback
+		`//span[contains(@aria-label, 'Photos')]`,
+		`//div[contains(@title, 'Photos')]`,
 	}
 
 	var photoVideoClicked bool
 	for i, selector := range photoVideoSelectors {
 		Log("info", fmt.Sprintf("Trying photos/videos selector %d/%d: %s", i+1, len(photoVideoSelectors), selector))
 
-		// Determine if it's XPath or CSS
-		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
-
-		// If it's a file input, use SetUploadFiles directly
-		if strings.Contains(selector, "input[type=\"file\"]") {
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-			err = chromedp.Run(ctx, chromedp.SetUploadFiles(selector, []string{absImagePath}))
-			cancel()
-			if err == nil {
-				photoVideoClicked = true
-				Log("info", fmt.Sprintf("✓ Successfully uploaded via direct file input: %s", selector))
-				break
-			}
-			continue
-		}
-
-		// Otherwise, click the menu option then look for file input
-		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-		var clickErr error
-		if bySearch {
-			clickErr = chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
-		} else {
-			clickErr = chromedp.Run(ctx, chromedp.Click(selector))
-		}
+		// All these should be XPath
+		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
+		clickErr := chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
 		cancel()
 
 		if clickErr == nil {
 			Log("info", fmt.Sprintf("✓ Clicked photos/videos option: %s", selector))
-			time.Sleep(1 * time.Second)
+			time.Sleep(1500 * time.Millisecond)
 
 			// Now try to find and use the file input for images
 			imageInputSelectors := []string{
@@ -542,7 +537,8 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 				`//input[@type='file' and contains(@accept, 'image')]`,
 			}
 
-			for _, inputSel := range imageInputSelectors {
+			for j, inputSel := range imageInputSelectors {
+				Log("debug", fmt.Sprintf("Trying file input %d/%d: %s", j+1, len(imageInputSelectors), inputSel))
 				inputBySearch := strings.HasPrefix(inputSel, "//")
 				ctx2, cancel2 := context.WithTimeout(c.ctx, 2*time.Second)
 				var uploadErr error
@@ -557,20 +553,23 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 					photoVideoClicked = true
 					Log("info", fmt.Sprintf("✓ Successfully uploaded image using input: %s", inputSel))
 					break
+				} else {
+					Log("debug", fmt.Sprintf("✗ File input %d failed: %v", j+1, uploadErr))
 				}
 			}
 
 			if photoVideoClicked {
 				break
 			}
+			Log("warn", "Clicked Photos/Videos but couldn't find file input, trying next selector...")
 		} else {
 			Log("debug", fmt.Sprintf("✗ Photos/videos selector %d failed: %v", i+1, clickErr))
 		}
 	}
 
 	if !photoVideoClicked {
-		Log("error", "Could not upload image via photos/videos option")
-		return fmt.Errorf("could not find photos/videos option or file input for image upload")
+		Log("error", "Could not upload image via photos/videos option - tried all selectors")
+		return fmt.Errorf("could not find and click photos/videos option in attachment menu")
 	}
 
 	// Wait for image to upload and preview to appear
