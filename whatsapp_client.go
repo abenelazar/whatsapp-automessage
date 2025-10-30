@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -650,63 +652,92 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Step 1: Click the attachment button to reveal file input
-	Log("info", "Step 1: Clicking attachment button...")
-	attachmentButtonSelectors := []string{
-		`//span[@data-icon='plus']`,
-		`//span[@data-icon='plus-rounded']`,
-		`//div[@title='Attach']`,
-		`//button[@aria-label='Attach']`,
+	// Step 1: Copy image to system clipboard using osascript (Mac) or PowerShell (Windows)
+	Log("info", "Step 1: Copying image to system clipboard...")
+
+	// Detect OS and use appropriate clipboard command
+	var clipboardCmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		// macOS: Use osascript to copy image to clipboard
+		// Determine image type from extension
+		ext := strings.ToLower(filepath.Ext(absImagePath))
+		var imageClass string
+		switch ext {
+		case ".png":
+			imageClass = "«class PNGf»"
+		case ".jpg", ".jpeg":
+			imageClass = "JPEG picture"
+		case ".gif":
+			imageClass = "GIF picture"
+		case ".tiff", ".tif":
+			imageClass = "TIFF picture"
+		default:
+			// Default to PNG for unknown types
+			imageClass = "«class PNGf»"
+		}
+
+		script := fmt.Sprintf(`set the clipboard to (read (POSIX file "%s") as %s)`, absImagePath, imageClass)
+		clipboardCmd = exec.Command("osascript", "-e", script)
+	} else if runtime.GOOS == "windows" {
+		// Windows: Use PowerShell to copy image to clipboard
+		psScript := fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('%s'))`, absImagePath)
+		clipboardCmd = exec.Command("powershell", "-Command", psScript)
+	} else {
+		Log("error", "Unsupported OS for clipboard operations")
+		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
 
-	var attachmentClicked bool
-	for _, selector := range attachmentButtonSelectors {
+	// Execute clipboard command
+	clipboardOutput, err := clipboardCmd.CombinedOutput()
+	if err != nil {
+		Log("error", fmt.Sprintf("Failed to copy image to system clipboard: %v, output: %s", err, string(clipboardOutput)))
+		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
+		return fmt.Errorf("failed to copy image to system clipboard: %w", err)
+	}
+
+	Log("info", "✓ Image copied to system clipboard")
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Click the message input box to focus it
+	Log("info", "Step 2: Clicking message input box...")
+	messageInputSelectors := []string{
+		`//div[@contenteditable='true'][@data-tab='10']`,
+		`//div[@contenteditable='true'][@role='textbox']`,
+		`//div[@contenteditable='true']`,
+	}
+
+	var inputClicked bool
+	for _, selector := range messageInputSelectors {
 		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
 		if err == nil {
-			attachmentClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked attachment button: %s", selector))
+			inputClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked message input: %s", selector))
 			break
 		}
 	}
 
-	if !attachmentClicked {
-		Log("warn", "Could not click attachment button, trying direct file input approach...")
-	} else {
-		time.Sleep(500 * time.Millisecond)
-		c.takeScreenshot(fmt.Sprintf("02_attachment_menu_%s.png", cleanNumber))
+	if !inputClicked {
+		c.takeScreenshot(fmt.Sprintf("02_input_not_found_%s.png", cleanNumber))
+		return fmt.Errorf("could not find message input box")
 	}
 
-	// Step 2: Find and use the file input element for images
-	Log("info", "Step 2: Looking for file input element...")
+	time.Sleep(500 * time.Millisecond)
 
-	// WhatsApp uses hidden file input elements. We need to find one that accepts images
-	fileInputSelectors := []string{
-		`input[type='file'][accept*='image']`,
-		`input[type='file']`,
-	}
+	// Step 3: Paste the image using Cmd/Ctrl+V
+	Log("info", "Step 3: Pasting image from clipboard with Cmd/Ctrl+V...")
+	err = chromedp.Run(c.ctx,
+		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // Modifier 2 = Cmd (Mac) or Ctrl (Windows)
+		chromedp.Sleep(3*time.Second),
+	)
 
-	var fileInputFound bool
-	for _, selector := range fileInputSelectors {
-		err = chromedp.Run(c.ctx,
-			chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.ByQuery),
-		)
-		if err == nil {
-			fileInputFound = true
-			Log("info", fmt.Sprintf("✓ Set file on input element: %s", selector))
-			break
-		}
-		Log("debug", fmt.Sprintf("Failed to set file on %s: %v", selector, err))
-	}
-
-	if !fileInputFound {
-		c.takeScreenshot(fmt.Sprintf("02_file_input_not_found_%s.png", cleanNumber))
-		Log("error", "Could not find file input element")
-		return fmt.Errorf("could not find file input element for image upload")
+	if err != nil {
+		c.takeScreenshot(fmt.Sprintf("03_paste_failed_%s.png", cleanNumber))
+		return fmt.Errorf("failed to paste image: %w", err)
 	}
 
 	// Wait for image preview to appear
-	Log("info", "Step 3: Waiting for image preview to load...")
-	time.Sleep(3 * time.Second)
+	Log("info", "Waiting for image preview to load...")
+	time.Sleep(2 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("03_image_preview_%s.png", cleanNumber))
 
 	// Add caption to the image
