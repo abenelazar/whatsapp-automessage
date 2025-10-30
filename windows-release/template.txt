@@ -1,4 +1,4 @@
-🔥 SHABBAT LECH LECHA – The Journey Begins
+*🔥 SHABBAT LECH LECHA – The Journey Begins*
 
 Hello {{.Name}} how are you?This Saturday morning in Kips Bay. Time to follow in Avraham's footsteps (don't worry, no desert walking required 😄).
 
