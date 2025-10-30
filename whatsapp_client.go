@@ -603,14 +603,16 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	// Click the attachment button to open the attachment menu
 	Log("info", "Looking for attachment button...")
 	attachmentSelectors := []string{
+		`//span[@data-icon='plus-rounded']`,                      // Current WhatsApp Web (2024)
+		`//span[@data-icon='plus-rounded']/parent::div`,          // Parent of the icon
+		`//span[@data-icon='plus-rounded']/ancestor::button`,     // Button containing the icon
+		`//span[@data-icon='plus-rounded']/ancestor::div[@role='button']`, // Div button containing icon
+		`span[data-icon='plus-rounded']`,                         // CSS version
+		`//span[@data-icon='plus']`,                              // Older version
+		`//span[@data-icon='attach-menu-plus']`,
 		`//div[@title='Attach']`,
 		`//button[@aria-label='Attach']`,
 		`//div[@aria-label='Attach']`,
-		`//span[@data-icon='plus']`,
-		`//span[@data-icon='attach-menu-plus']`,
-		`//span[@data-icon='plus']/parent::div[@role='button']`,
-		`div[title='Attach']`,
-		`button[aria-label='Attach']`,
 	}
 
 	var attachmentClicked bool
@@ -652,7 +654,10 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	// Click on "Photos & Videos" option (NOT stickers) to ensure proper attachment mode
 	Log("info", "Looking for 'Photos & Videos' option in attachment menu...")
 	photoVideoSelectors := []string{
-		`//span[contains(text(), 'Photos & videos')]`,
+		`(//li[@role='listitem'])[2]`,                            // Second item in the menu (Photos & Videos)
+		`(//ul/li)[2]`,                                           // Second li element
+		`//li[@role='listitem'][2]`,                              // Second listitem
+		`//span[contains(text(), 'Photos & videos')]`,            // Text-based selectors as fallback
 		`//span[contains(text(), 'Photos & Videos')]`,
 		`//li[@role='listitem']//span[contains(text(), 'Photos')]`,
 		`//div[@title='Photos & videos']`,
