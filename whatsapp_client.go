@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -520,6 +521,13 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 	Log("info", fmt.Sprintf("Using image at: %s", absImagePath))
 
+	// Read the image file into memory
+	imageData, err := os.ReadFile(absImagePath)
+	if err != nil {
+		return fmt.Errorf("failed to read image file: %w", err)
+	}
+	Log("info", fmt.Sprintf("Read image file: %d bytes", len(imageData)))
+
 	// Navigate to chat
 	Log("info", "Navigating to chat for image send...")
 	err = chromedp.Run(c.ctx,
@@ -600,131 +608,107 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Click the attachment button to open the attachment menu
-	Log("info", "Looking for attachment button...")
-	attachmentSelectors := []string{
-		`//span[@data-icon='plus-rounded']`,                      // Current WhatsApp Web (2024)
-		`//span[@data-icon='plus-rounded']/parent::div`,          // Parent of the icon
-		`//span[@data-icon='plus-rounded']/ancestor::button`,     // Button containing the icon
-		`//span[@data-icon='plus-rounded']/ancestor::div[@role='button']`, // Div button containing icon
-		`span[data-icon='plus-rounded']`,                         // CSS version
-		`//span[@data-icon='plus']`,                              // Older version
-		`//span[@data-icon='attach-menu-plus']`,
-		`//div[@title='Attach']`,
-		`//button[@aria-label='Attach']`,
-		`//div[@aria-label='Attach']`,
+	// Find and click the message input box to focus it
+	Log("info", "Looking for message input box...")
+	messageInputSelectors := []string{
+		`//div[@contenteditable='true'][@data-tab='10']`,
+		`//div[@contenteditable='true'][@role='textbox']`,
+		`//div[@contenteditable='true']`,
 	}
 
-	var attachmentClicked bool
-	for i, selector := range attachmentSelectors {
-		Log("info", fmt.Sprintf("Trying attachment selector %d/%d: %s", i+1, len(attachmentSelectors), selector))
-
-		// Determine if it's XPath or CSS
-		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
-
-		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
-		var err error
-		if bySearch {
-			err = chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
-		} else {
-			err = chromedp.Run(ctx, chromedp.Click(selector))
-		}
-		cancel()
-
+	var messageInputFound bool
+	for _, selector := range messageInputSelectors {
+		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
 		if err == nil {
-			attachmentClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked attachment button with selector: %s", selector))
+			messageInputFound = true
+			Log("info", fmt.Sprintf("✓ Found and clicked message input: %s", selector))
 			break
-		} else {
-			Log("debug", fmt.Sprintf("✗ Attachment selector %d failed: %v", i+1, err))
 		}
 	}
 
-	if !attachmentClicked {
-		c.takeScreenshot(fmt.Sprintf("02_attachment_failed_%s.png", cleanNumber))
-		Log("error", "Could not click attachment button!")
-		return fmt.Errorf("could not find or click attachment button")
+	if !messageInputFound {
+		c.takeScreenshot(fmt.Sprintf("02_input_not_found_%s.png", cleanNumber))
+		return fmt.Errorf("could not find message input box")
 	}
 
-	// Wait for the attachment menu to appear
-	Log("info", "Waiting for attachment menu to appear...")
-	time.Sleep(2 * time.Second)
-	c.takeScreenshot(fmt.Sprintf("03_attachment_menu_%s.png", cleanNumber))
+	time.Sleep(500 * time.Millisecond)
 
-	// Click on "Photos & Videos" option (NOT stickers) to ensure proper attachment mode
-	Log("info", "Looking for 'Photos & Videos' option in attachment menu...")
-	photoVideoSelectors := []string{
-		`(//li[@role='listitem'])[2]`,                            // Second item in the menu (Photos & Videos)
-		`(//ul/li)[2]`,                                           // Second li element
-		`//li[@role='listitem'][2]`,                              // Second listitem
-		`//span[contains(text(), 'Photos & videos')]`,            // Text-based selectors as fallback
-		`//span[contains(text(), 'Photos & Videos')]`,
-		`//li[@role='listitem']//span[contains(text(), 'Photos')]`,
-		`//div[@title='Photos & videos']`,
-		`//button[@aria-label='Photos & videos']`,
-		`//span[contains(@aria-label, 'Photos')]`,
-		`//div[contains(@title, 'Photos')]`,
+	// Copy image to clipboard and paste it
+	Log("info", "Copying image to clipboard and pasting...")
+
+	// Use JavaScript to copy the image file to clipboard as a blob
+	// This requires reading the file and converting to base64
+	base64Image := base64.StdEncoding.EncodeToString(imageData)
+
+	// Determine MIME type from file extension
+	mimeType := "image/png"
+	ext := strings.ToLower(filepath.Ext(absImagePath))
+	switch ext {
+	case ".jpg", ".jpeg":
+		mimeType = "image/jpeg"
+	case ".png":
+		mimeType = "image/png"
+	case ".gif":
+		mimeType = "image/gif"
+	case ".webp":
+		mimeType = "image/webp"
 	}
 
-	var photoVideoClicked bool
-	for i, selector := range photoVideoSelectors {
-		Log("info", fmt.Sprintf("Trying photos/videos selector %d/%d: %s", i+1, len(photoVideoSelectors), selector))
-
-		// All these should be XPath
-		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
-		clickErr := chromedp.Run(ctx, chromedp.Click(selector, chromedp.BySearch))
-		cancel()
-
-		if clickErr == nil {
-			Log("info", fmt.Sprintf("✓ Clicked photos/videos option: %s", selector))
-			time.Sleep(1500 * time.Millisecond)
-
-			// Now try to find and use the file input for images
-			imageInputSelectors := []string{
-				`input[type="file"][accept*="image"]`,
-				`input[type="file"][accept*="video"]`,
-				`//input[@type='file' and contains(@accept, 'image')]`,
-			}
-
-			for j, inputSel := range imageInputSelectors {
-				Log("debug", fmt.Sprintf("Trying file input %d/%d: %s", j+1, len(imageInputSelectors), inputSel))
-				inputBySearch := strings.HasPrefix(inputSel, "//")
-				ctx2, cancel2 := context.WithTimeout(c.ctx, 2*time.Second)
-				var uploadErr error
-				if inputBySearch {
-					uploadErr = chromedp.Run(ctx2, chromedp.SetUploadFiles(inputSel, []string{absImagePath}, chromedp.BySearch))
-				} else {
-					uploadErr = chromedp.Run(ctx2, chromedp.SetUploadFiles(inputSel, []string{absImagePath}))
+	clipboardJS := fmt.Sprintf(`
+		(async function() {
+			try {
+				// Convert base64 to blob
+				const base64Data = '%s';
+				const byteCharacters = atob(base64Data);
+				const byteNumbers = new Array(byteCharacters.length);
+				for (let i = 0; i < byteCharacters.length; i++) {
+					byteNumbers[i] = byteCharacters.charCodeAt(i);
 				}
-				cancel2()
+				const byteArray = new Uint8Array(byteNumbers);
+				const blob = new Blob([byteArray], { type: '%s' });
 
-				if uploadErr == nil {
-					photoVideoClicked = true
-					Log("info", fmt.Sprintf("✓ Successfully uploaded image using input: %s", inputSel))
-					break
-				} else {
-					Log("debug", fmt.Sprintf("✗ File input %d failed: %v", j+1, uploadErr))
-				}
-			}
+				// Copy to clipboard
+				await navigator.clipboard.write([
+					new ClipboardItem({ '%s': blob })
+				]);
 
-			if photoVideoClicked {
-				break
+				return true;
+			} catch (e) {
+				console.error('Clipboard error:', e);
+				return false;
 			}
-			Log("warn", "Clicked Photos/Videos but couldn't find file input, trying next selector...")
-		} else {
-			Log("debug", fmt.Sprintf("✗ Photos/videos selector %d failed: %v", i+1, clickErr))
-		}
+		})()
+	`, base64Image, mimeType, mimeType)
+
+	var clipboardSuccess bool
+	err = chromedp.Run(c.ctx,
+		chromedp.Evaluate(clipboardJS, &clipboardSuccess),
+		chromedp.Sleep(500*time.Millisecond),
+	)
+
+	if err != nil || !clipboardSuccess {
+		c.takeScreenshot(fmt.Sprintf("03_clipboard_failed_%s.png", cleanNumber))
+		Log("error", fmt.Sprintf("Failed to copy image to clipboard: %v", err))
+		return fmt.Errorf("failed to copy image to clipboard")
 	}
 
-	if !photoVideoClicked {
-		c.takeScreenshot(fmt.Sprintf("04_photo_upload_failed_%s.png", cleanNumber))
-		Log("error", "Could not upload image via photos/videos option - tried all selectors")
-		return fmt.Errorf("could not find and click photos/videos option in attachment menu")
+	Log("info", "✓ Image copied to clipboard")
+
+	// Paste the image using Ctrl/Cmd+V
+	Log("info", "Pasting image from clipboard...")
+	err = chromedp.Run(c.ctx,
+		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // Cmd/Ctrl+V
+		chromedp.Sleep(2*time.Second),
+	)
+
+	if err != nil {
+		c.takeScreenshot(fmt.Sprintf("04_paste_failed_%s.png", cleanNumber))
+		return fmt.Errorf("failed to paste image: %w", err)
 	}
 
-	// Wait for image to upload and preview to appear
-	Log("info", "Waiting for image preview to load...")
-	time.Sleep(4 * time.Second)
+	// Wait for image preview to appear
+	Log("info", "Waiting for image preview...")
+	time.Sleep(3 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("05_image_preview_%s.png", cleanNumber))
 
 	// Add caption to the image
