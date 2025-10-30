@@ -361,28 +361,54 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
 	normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
 
-	// Method 1: Use chromedp's SendKeys (simulates actual keyboard typing)
-	Log("info", "Method 1: Trying SendKeys (simulated typing)...")
+	// Method 1: Type message with proper newline handling (Shift+Enter for newlines)
+	Log("info", "Method 1: Typing message with keyboard simulation...")
 	var textPasted bool
 
-	err = chromedp.Run(c.ctx,
-		chromedp.SendKeys(usedSelector, normalizedMessage, chromedp.BySearch),
-		chromedp.Sleep(1*time.Second),
-	)
+	// Split message by newlines and send each part separately with Shift+Enter between them
+	lines := strings.Split(normalizedMessage, "\n")
+
+	for i, line := range lines {
+		if i > 0 {
+			// Send Shift+Enter for newline (Enter alone sends the message in WhatsApp)
+			// Modifier 8 = Shift (1 << 3)
+			err = chromedp.Run(c.ctx,
+				chromedp.KeyEvent("\r", chromedp.KeyModifiers(8)),
+				chromedp.Sleep(50*time.Millisecond),
+			)
+			if err != nil {
+				Log("warn", fmt.Sprintf("Failed to send Shift+Enter: %v", err))
+				break
+			}
+		}
+
+		// Type this line
+		if line != "" {
+			err = chromedp.Run(c.ctx,
+				chromedp.SendKeys(usedSelector, line, chromedp.BySearch, chromedp.NodeNotVisible),
+				chromedp.Sleep(50*time.Millisecond),
+			)
+			if err != nil {
+				Log("warn", fmt.Sprintf("Failed to type line %d: %v", i+1, err))
+				break
+			}
+		}
+	}
 
 	if err != nil {
-		Log("warn", fmt.Sprintf("SendKeys failed: %v, trying advanced DOM method", err))
+		Log("warn", fmt.Sprintf("Keyboard simulation failed: %v, trying advanced DOM method", err))
 	} else {
 		// Verify that text was typed
+		time.Sleep(300 * time.Millisecond)
 		var inputText string
 		chromedp.Run(c.ctx,
 			chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
 		)
 		if len(inputText) > 0 {
 			textPasted = true
-			Log("info", fmt.Sprintf("✓ SendKeys successful (%d characters typed)", len(inputText)))
+			Log("info", fmt.Sprintf("✓ Keyboard typing successful (%d characters typed)", len(inputText)))
 		} else {
-			Log("warn", "SendKeys reported success but input is empty, trying advanced method...")
+			Log("warn", "Typing reported success but input is empty, trying advanced method...")
 		}
 	}
 
@@ -625,36 +651,8 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Find and click the message input box to focus it
-	Log("info", "Looking for message input box...")
-	messageInputSelectors := []string{
-		`//div[@contenteditable='true'][@data-tab='10']`,
-		`//div[@contenteditable='true'][@role='textbox']`,
-		`//div[@contenteditable='true']`,
-	}
-
-	var messageInputFound bool
-	for _, selector := range messageInputSelectors {
-		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
-		if err == nil {
-			messageInputFound = true
-			Log("info", fmt.Sprintf("✓ Found and clicked message input: %s", selector))
-			break
-		}
-	}
-
-	if !messageInputFound {
-		c.takeScreenshot(fmt.Sprintf("02_input_not_found_%s.png", cleanNumber))
-		return fmt.Errorf("could not find message input box")
-	}
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Copy image to clipboard and paste it
-	Log("info", "Copying image to clipboard and pasting...")
-
-	// Use JavaScript to copy the image file to clipboard as a blob
-	// This requires reading the file and converting to base64
+	// Step 1: Copy image to clipboard using JavaScript
+	Log("info", "Step 1: Copying image to clipboard...")
 	base64Image := base64.StdEncoding.EncodeToString(imageData)
 
 	// Determine MIME type from file extension
@@ -674,7 +672,6 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	clipboardJS := fmt.Sprintf(`
 		(async function() {
 			try {
-				// Convert base64 to blob
 				const base64Data = '%s';
 				const byteCharacters = atob(base64Data);
 				const byteNumbers = new Array(byteCharacters.length);
@@ -684,7 +681,6 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 				const byteArray = new Uint8Array(byteNumbers);
 				const blob = new Blob([byteArray], { type: '%s' });
 
-				// Copy to clipboard
 				await navigator.clipboard.write([
 					new ClipboardItem({ '%s': blob })
 				]);
@@ -700,22 +696,47 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	var clipboardSuccess bool
 	err = chromedp.Run(c.ctx,
 		chromedp.Evaluate(clipboardJS, &clipboardSuccess),
-		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Sleep(1*time.Second),
 	)
 
 	if err != nil || !clipboardSuccess {
-		c.takeScreenshot(fmt.Sprintf("03_clipboard_failed_%s.png", cleanNumber))
+		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
 		Log("error", fmt.Sprintf("Failed to copy image to clipboard: %v", err))
 		return fmt.Errorf("failed to copy image to clipboard")
 	}
 
 	Log("info", "✓ Image copied to clipboard")
 
-	// Paste the image using Ctrl/Cmd+V
-	Log("info", "Pasting image from clipboard...")
+	// Step 2: Click the message input box to focus it
+	Log("info", "Step 2: Finding and clicking message input box...")
+	messageInputSelectors := []string{
+		`//div[@contenteditable='true'][@data-tab='10']`,
+		`//div[@contenteditable='true'][@role='textbox']`,
+		`//div[@contenteditable='true']`,
+	}
+
+	var inputClicked bool
+	for _, selector := range messageInputSelectors {
+		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
+		if err == nil {
+			inputClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked message input: %s", selector))
+			break
+		}
+	}
+
+	if !inputClicked {
+		c.takeScreenshot(fmt.Sprintf("03_input_not_found_%s.png", cleanNumber))
+		return fmt.Errorf("could not find message input box")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 3: Paste the image using Ctrl/Cmd+V directly into the text box
+	Log("info", "Step 3: Pasting image into text box with Cmd/Ctrl+V...")
 	err = chromedp.Run(c.ctx,
 		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // Cmd/Ctrl+V
-		chromedp.Sleep(2*time.Second),
+		chromedp.Sleep(3*time.Second),
 	)
 
 	if err != nil {
@@ -724,8 +745,8 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	// Wait for image preview to appear
-	Log("info", "Waiting for image preview...")
-	time.Sleep(3 * time.Second)
+	Log("info", "Waiting for image preview to load...")
+	time.Sleep(2 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("05_image_preview_%s.png", cleanNumber))
 
 	// Add caption to the image
@@ -782,31 +803,48 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		time.Sleep(300 * time.Millisecond)
 
 		// Normalize line endings
-		normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
-		normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
+		normalizedCaption := strings.ReplaceAll(message, "\r\n", "\n")
+		normalizedCaption = strings.ReplaceAll(normalizedCaption, "\r", "\n")
 
-		// Copy message to clipboard using JavaScript
-		Log("debug", "Copying caption to clipboard...")
-		jsCode := fmt.Sprintf(`navigator.clipboard.writeText(%s)`, escapeJSString(normalizedMessage))
-		err = chromedp.Run(c.ctx,
-			chromedp.Evaluate(jsCode, nil),
-			chromedp.Sleep(200*time.Millisecond),
-		)
-		if err != nil {
-			Log("warn", fmt.Sprintf("Failed to copy caption to clipboard: %v", err))
+		// Type caption with proper newline handling (Shift+Enter for newlines)
+		Log("info", "Typing caption with keyboard simulation...")
+		captionLines := strings.Split(normalizedCaption, "\n")
+
+		for i, line := range captionLines {
+			if i > 0 {
+				// Send Shift+Enter for newline
+				// Modifier 8 = Shift (1 << 3)
+				err = chromedp.Run(c.ctx,
+					chromedp.KeyEvent("\r", chromedp.KeyModifiers(8)),
+					chromedp.Sleep(50*time.Millisecond),
+				)
+				if err != nil {
+					Log("warn", fmt.Sprintf("Failed to send Shift+Enter in caption: %v", err))
+					break
+				}
+			}
+
+			// Type this line of caption
+			if line != "" {
+				if bySearch {
+					err = chromedp.Run(c.ctx,
+						chromedp.SendKeys(usedCaptionSelector, line, chromedp.BySearch, chromedp.NodeNotVisible),
+						chromedp.Sleep(50*time.Millisecond),
+					)
+				} else {
+					err = chromedp.Run(c.ctx,
+						chromedp.SendKeys(usedCaptionSelector, line, chromedp.NodeNotVisible),
+						chromedp.Sleep(50*time.Millisecond),
+					)
+				}
+				if err != nil {
+					Log("warn", fmt.Sprintf("Failed to type caption line %d: %v", i+1, err))
+					break
+				}
+			}
 		}
 
-		// Paste the caption using Ctrl+V (Cmd+V on Mac)
-		Log("debug", "Pasting caption from clipboard...")
-		err = chromedp.Run(c.ctx,
-			chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
-			chromedp.Sleep(500*time.Millisecond),
-		)
-		if err != nil {
-			Log("warn", fmt.Sprintf("Failed to paste caption: %v", err))
-		}
-
-		Log("info", "Caption added successfully")
+		Log("info", "Caption typing complete")
 		time.Sleep(1 * time.Second)
 	} else {
 		Log("warn", "Could not find caption input - sending image without caption")
