@@ -669,6 +669,8 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		mimeType = "image/webp"
 	}
 
+	// Use a simpler approach: set a global variable then read it back
+	// This avoids Promise unmarshaling issues
 	clipboardJS := fmt.Sprintf(`
 		(async function() {
 			try {
@@ -685,18 +687,30 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 					new ClipboardItem({ '%s': blob })
 				]);
 
-				return true;
+				window._clipboardSuccess = true;
 			} catch (e) {
 				console.error('Clipboard error:', e);
-				return false;
+				window._clipboardSuccess = false;
 			}
 		})()
 	`, base64Image, mimeType, mimeType)
 
+	// Execute the async function
+	err = chromedp.Run(c.ctx,
+		chromedp.Evaluate(clipboardJS, nil),
+		chromedp.Sleep(1500*time.Millisecond), // Wait for async completion
+	)
+
+	if err != nil {
+		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
+		Log("error", fmt.Sprintf("Failed to execute clipboard code: %v", err))
+		return fmt.Errorf("failed to execute clipboard code: %w", err)
+	}
+
+	// Read back the result
 	var clipboardSuccess bool
 	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(clipboardJS, &clipboardSuccess),
-		chromedp.Sleep(1*time.Second),
+		chromedp.Evaluate(`window._clipboardSuccess === true`, &clipboardSuccess),
 	)
 
 	if err != nil || !clipboardSuccess {
