@@ -153,37 +153,20 @@ if not exist "template.txt" (
         echo Creating custom template...
         echo You can use {{.Name}} for contact name and {{.PhoneNumber}} for phone
         echo.
-        echo Enter your message (type END on a new line when done):
-        (
-            setlocal enabledelayedexpansion
-            set "lines="
-            :read_loop
-            set "line="
-            set /p "line="
-            if "!line!"=="END" goto end_read
-            if defined lines (
-                set "lines=!lines!
-!line!"
-            ) else (
-                set "lines=!line!"
-            )
-            goto read_loop
-            :end_read
-            echo !lines!
-            endlocal
-        ) > template.txt
-        echo Custom template created!
-    ) else (
-        (
-            echo Hello {{.Name}}!
-            echo.
-            echo This is a personalized message for you.
-            echo.
-            echo Best regards,
-            echo The Team
-        ) > template.txt
-        echo Default template created!
+        echo NOTE: Custom template creation requires manual editing.
+        echo Creating default template - you can edit it after setup.
+        echo.
     )
+    REM Always create default template for simplicity
+    (
+        echo Hello {{.Name}}!
+        echo.
+        echo I wanted to let you know that your current value is {{.Value}}.
+        echo.
+        echo Best regards,
+        echo The Team
+    ) > template.txt
+    echo Default template created!
 ) else (
     echo template.txt already exists
 )
