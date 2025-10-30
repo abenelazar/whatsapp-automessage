@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"gopkg.in/yaml.v3"
@@ -62,6 +63,16 @@ func LoadConfig(configPath string) (*Config, error) {
 	if config.Browser.UserDataDir == "" {
 		config.Browser.UserDataDir = "./chrome-data"
 	}
+
+	// Convert user data directory to absolute path
+	if config.Browser.UserDataDir != "" {
+		absPath, err := filepath.Abs(config.Browser.UserDataDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve user data directory path: %w", err)
+		}
+		config.Browser.UserDataDir = absPath
+	}
+
 	if config.Browser.ChromePath == "" {
 		config.Browser.ChromePath = findChromePath()
 	}

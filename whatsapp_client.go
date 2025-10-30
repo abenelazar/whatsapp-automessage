@@ -399,33 +399,45 @@ func checkNetworkConnectivity() error {
 // ensureUserDataDir creates the user data directory if it doesn't exist
 // and ensures it has proper permissions for Chrome to access
 func ensureUserDataDir(dirPath string) error {
-	// Convert to absolute path
-	absPath, err := filepath.Abs(dirPath)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+	if dirPath == "" {
+		Log("info", "No user data directory specified, Chrome will use default")
+		return nil
 	}
 
+	// dirPath is already absolute from LoadConfig
+	Log("info", fmt.Sprintf("Using user data directory: %s", dirPath))
+
 	// Check if directory exists
-	info, err := os.Stat(absPath)
+	info, err := os.Stat(dirPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Directory doesn't exist, create it
-			Log("info", fmt.Sprintf("Creating user data directory: %s", absPath))
-			if err := os.MkdirAll(absPath, 0755); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
+			Log("info", fmt.Sprintf("Creating user data directory: %s", dirPath))
+			// Use 0777 permissions for Windows compatibility
+			if err := os.MkdirAll(dirPath, 0777); err != nil {
+				Log("error", fmt.Sprintf("Failed to create directory: %v", err))
+				return fmt.Errorf("failed to create directory %s: %w\nTry running as administrator or use a different directory", dirPath, err)
 			}
 			Log("info", "User data directory created successfully")
-			return nil
+		} else {
+			return fmt.Errorf("failed to check directory: %w", err)
 		}
-		return fmt.Errorf("failed to check directory: %w", err)
+	} else {
+		// Check if it's actually a directory
+		if !info.IsDir() {
+			return fmt.Errorf("path exists but is not a directory: %s", dirPath)
+		}
+		Log("debug", "User data directory already exists")
 	}
 
-	// Check if it's actually a directory
-	if !info.IsDir() {
-		return fmt.Errorf("path exists but is not a directory: %s", absPath)
+	// Test write permissions by creating a test file
+	testFile := filepath.Join(dirPath, ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0666); err != nil {
+		Log("error", fmt.Sprintf("Cannot write to directory: %v", err))
+		return fmt.Errorf("directory exists but is not writable: %s\nTry:\n1. Running as administrator\n2. Deleting the directory and trying again\n3. Using a different directory in config.yaml", dirPath)
 	}
+	os.Remove(testFile) // Clean up test file
+	Log("debug", "Directory write test passed")
 
-	// Directory exists and is valid
-	Log("info", fmt.Sprintf("Using existing user data directory: %s", absPath))
 	return nil
 }
