@@ -1,6 +1,6 @@
 *🔥 SHABBAT LECH LECHA – The Journey Begins*
 
-Hello {{.Name}} how are you?This Saturday morning in Kips Bay. Time to follow in Avraham's footsteps (don't worry, no desert walking required 😄).
+Hello {{.Name}}, how are you? This Saturday morning in Kips Bay, it's time to follow in Avraham's footsteps (don't worry, no desert walking required 😄).
 
 Meaning, connection, and great vibes await. 🍹
 
