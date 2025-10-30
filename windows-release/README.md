@@ -24,56 +24,27 @@ A robust Go-based automation tool for sending personalized WhatsApp messages to 
 
 ## Quick Start Guide
 
-### 1. Install Go
-
-1. Download Go for Windows from: https://go.dev/dl/
-2. Run the installer (e.g., `go1.25.3.windows-amd64.msi`)
-3. Follow the installation wizard
-4. Verify installation by opening Command Prompt and typing:
-   ```cmd
-   go version
-   ```
-
-### 2. Extract and Setup
+### 1. Extract the Package
 
 1. Extract this ZIP file to a folder (e.g., `C:\whatsapp-automation`)
-2. Open Command Prompt (cmd.exe)
-3. Navigate to the folder:
+2. The package includes a pre-compiled executable - no installation required!
+
+### 2. Run the Setup Script
+
+1. Double-click `setup.bat` or run from Command Prompt:
    ```cmd
-   cd C:\whatsapp-automation
+   setup.bat
    ```
-
-### 3. Run the Setup Script
-
-```cmd
-setup.bat
-```
 
 This will:
-- Install Go dependencies
-- Build the application
-- Create example configuration files
+- Verify the application executable is present
+- Check for Google Chrome installation
+- Create configuration files (config.yaml, contacts.csv, template.txt)
+- Set up required directories
 
-### 4. Configure Your Settings
+### 3. Prepare Your Contacts
 
-1. Copy `config.example.yaml` to `config.yaml`:
-   ```cmd
-   copy config.example.yaml config.yaml
-   ```
-
-2. Edit `config.yaml` with Notepad if needed:
-   ```cmd
-   notepad config.yaml
-   ```
-
-### 5. Prepare Your Contacts
-
-1. Copy `contacts.example.csv` to `contacts.csv`:
-   ```cmd
-   copy contacts.example.csv contacts.csv
-   ```
-
-2. Edit `contacts.csv` with your actual contacts:
+The setup script already created `contacts.csv` from the example. Now edit it with your actual contacts:
    ```cmd
    notepad contacts.csv
    ```
@@ -87,7 +58,7 @@ This will:
 
    **Important**: Phone numbers MUST include country code with + prefix (e.g., +1 for US)
 
-### 6. Customize Your Message Template
+### 4. Customize Your Message Template
 
 Edit `template.txt` to customize your message:
 ```cmd
@@ -108,7 +79,7 @@ Best regards,
 The Team
 ```
 
-### 7. Run the Application
+### 5. Run the Application
 
 **First Run - QR Code Scan:**
 ```cmd
@@ -138,10 +109,9 @@ run-dryrun.bat
 
 This package includes several batch files for Windows:
 
-- **setup.bat** - First-time setup (install dependencies and build)
+- **setup.bat** - First-time setup and configuration
 - **run.bat** - Run the application normally
 - **run-dryrun.bat** - Test run without sending messages
-- **build.bat** - Rebuild the application
 - **clean.bat** - Remove session data and logs
 
 ## Configuration Reference
@@ -287,11 +257,10 @@ clean.bat
 
 ```
 whatsapp-automation/
-├── whatsapp-automation.exe   (Built application)
+├── whatsapp-automation.exe   (Pre-compiled application)
 ├── setup.bat                 (Setup script)
 ├── run.bat                   (Run script)
 ├── run-dryrun.bat           (Test script)
-├── build.bat                 (Build script)
 ├── clean.bat                 (Clean script)
 ├── config.yaml              (Your configuration)
 ├── config.example.yaml      (Example configuration)

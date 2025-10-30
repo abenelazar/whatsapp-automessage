@@ -298,7 +298,6 @@ echo   - Scan QR code with your phone
 echo   - Messages will be sent automatically
 echo.
 echo OTHER COMMANDS:
-echo   - build.bat - Rebuild the application (requires Go)
 echo   - clean.bat - Clean up logs and session data
 echo.
 echo ============================================

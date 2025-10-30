@@ -13,24 +13,22 @@ echo NOTE: This script is designed for Windows only.
 echo If you're on macOS/Linux, some checks may fail - this is normal.
 echo.
 
-REM Check if Go is installed
-echo [1/5] Checking for Go installation...
-go version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ERROR: Go is not installed!
+REM Check if whatsapp-automation.exe exists
+echo [1/4] Checking for application executable...
+if not exist "whatsapp-automation.exe" (
+    echo ERROR: whatsapp-automation.exe not found!
     echo.
-    echo Please install Go from: https://go.dev/dl/
-    echo Download the Windows installer and run it.
+    echo This package should include the pre-compiled executable.
+    echo Please re-download the complete package.
     echo.
     pause
     exit /b 1
 )
-echo Go is installed:
-go version
+echo Application executable found: whatsapp-automation.exe
 echo.
 
 REM Check if Chrome is installed
-echo [2/5] Checking for Google Chrome...
+echo [2/4] Checking for Google Chrome...
 set CHROME_PATH=
 if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" set CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
 if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" set CHROME_PATH=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
@@ -45,30 +43,8 @@ if defined CHROME_PATH (
 )
 echo.
 
-REM Install Go dependencies
-echo [3/5] Installing Go dependencies...
-go mod tidy
-if %errorlevel% neq 0 (
-    echo ERROR: Failed to install dependencies
-    pause
-    exit /b 1
-)
-echo Dependencies installed successfully
-echo.
-
-REM Build the application
-echo [4/5] Building the application...
-go build -o whatsapp-automation.exe
-if %errorlevel% neq 0 (
-    echo ERROR: Failed to build application
-    pause
-    exit /b 1
-)
-echo Application built successfully: whatsapp-automation.exe
-echo.
-
 REM Create config files if they don't exist
-echo [5/5] Setting up configuration files...
+echo [3/4] Setting up configuration files...
 echo.
 
 REM Setup config.yaml
@@ -189,19 +165,24 @@ if not exist "template.txt" (
 )
 echo.
 
+echo [4/4] Creating required directories and tracking files...
+
 REM Create chrome-data directory if it doesn't exist
 if not exist "chrome-data" (
     mkdir chrome-data
     echo Created chrome-data directory for browser session storage
-    echo.
+) else (
+    echo chrome-data directory already exists
 )
 
 REM Create completed.csv if it doesn't exist
 if not exist "completed.csv" (
     echo name,phone_number,hash,timestamp > completed.csv
     echo Created completed.csv to track sent messages
-    echo.
+) else (
+    echo completed.csv already exists
 )
+echo.
 
 echo ============================================
 echo Setup completed successfully!

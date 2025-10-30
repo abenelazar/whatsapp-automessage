@@ -57,7 +57,6 @@ CONFIGURATION:
    contacts.example.csv - Example contacts
 
 OPTIONAL:
-   build.bat - Rebuild from source (requires Go)
    clean.bat - Clean logs and data
    README.md - Full documentation
 
