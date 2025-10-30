@@ -688,9 +688,11 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 				]);
 
 				window._clipboardSuccess = true;
+				window._clipboardError = null;
 			} catch (e) {
 				console.error('Clipboard error:', e);
 				window._clipboardSuccess = false;
+				window._clipboardError = e.toString() + ' | ' + e.message;
 			}
 		})()
 	`, base64Image, mimeType, mimeType)
@@ -714,9 +716,15 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	)
 
 	if err != nil || !clipboardSuccess {
+		// Try to get the error message from the browser
+		var clipboardError string
+		chromedp.Run(c.ctx,
+			chromedp.Evaluate(`window._clipboardError || 'Unknown error'`, &clipboardError),
+		)
+
 		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
-		Log("error", fmt.Sprintf("Failed to copy image to clipboard: %v", err))
-		return fmt.Errorf("failed to copy image to clipboard")
+		Log("error", fmt.Sprintf("Failed to copy image to clipboard. Browser error: %s, Go error: %v", clipboardError, err))
+		return fmt.Errorf("failed to copy image to clipboard: %s", clipboardError)
 	}
 
 	Log("info", "✓ Image copied to clipboard")
