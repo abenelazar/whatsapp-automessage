@@ -208,13 +208,14 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 	Log("debug", fmt.Sprintf("Opening chat for %s", phoneNumber))
 
-	// Send image first if configured (but don't fail the whole message if image fails)
+	// Send image with caption if configured
 	if c.config.Files.ImagePath != "" {
-		if err := c.sendImage(phoneNumber, cleanNumber, chatURL); err != nil {
+		if err := c.sendImageWithCaption(phoneNumber, cleanNumber, chatURL, message); err != nil {
 			Log("warn", fmt.Sprintf("Failed to send image to %s: %v", phoneNumber, err))
 			Log("warn", "Continuing with text message only...")
 		} else {
-			Log("info", "Image sent successfully, now sending text message...")
+			Log("info", "Image with caption sent successfully!")
+			return nil // Image was sent with caption, we're done
 		}
 	}
 
@@ -391,9 +392,9 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	return nil
 }
 
-// sendImage sends an image to a WhatsApp contact
-func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) error {
-	Log("info", fmt.Sprintf("Sending image to %s", phoneNumber))
+// sendImageWithCaption sends an image with a text caption to a WhatsApp contact
+func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL, message string) error {
+	Log("info", fmt.Sprintf("Sending image with caption to %s", phoneNumber))
 
 	// Verify image file exists
 	if _, err := os.Stat(c.config.Files.ImagePath); err != nil {
@@ -535,6 +536,90 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 	// Wait for image to upload and preview to appear
 	Log("info", "Waiting for image preview to load...")
 	time.Sleep(4 * time.Second)
+
+	// Add caption to the image
+	Log("info", "Adding caption to image...")
+
+	// Find the caption input box in the image preview modal
+	captionSelectors := []string{
+		`div[contenteditable='true'][data-tab='10']`,
+		`div[contenteditable='true'][role='textbox']`,
+		`div.copyable-text[contenteditable='true']`,
+		`//div[@contenteditable='true'][@data-tab='10']`,
+		`//div[@contenteditable='true'][@role='textbox']`,
+	}
+
+	var captionInputFound bool
+	var usedCaptionSelector string
+	for i, selector := range captionSelectors {
+		Log("debug", fmt.Sprintf("Trying caption input selector %d/%d: %s", i+1, len(captionSelectors), selector))
+
+		// Determine if it's XPath or CSS
+		bySearch := strings.HasPrefix(selector, "//") || strings.HasPrefix(selector, "(")
+
+		ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
+		var err error
+		if bySearch {
+			err = chromedp.Run(ctx, chromedp.WaitVisible(selector, chromedp.BySearch))
+		} else {
+			err = chromedp.Run(ctx, chromedp.WaitVisible(selector))
+		}
+		cancel()
+
+		if err == nil {
+			captionInputFound = true
+			usedCaptionSelector = selector
+			Log("info", fmt.Sprintf("✓ Found caption input with selector: %s", selector))
+			break
+		} else {
+			Log("debug", fmt.Sprintf("✗ Caption selector %d failed: %v", i+1, err))
+		}
+	}
+
+	if captionInputFound {
+		// Click the caption input to focus it
+		bySearch := strings.HasPrefix(usedCaptionSelector, "//") || strings.HasPrefix(usedCaptionSelector, "(")
+		if bySearch {
+			err = chromedp.Run(c.ctx, chromedp.Click(usedCaptionSelector, chromedp.BySearch))
+		} else {
+			err = chromedp.Run(c.ctx, chromedp.Click(usedCaptionSelector))
+		}
+		if err != nil {
+			Log("warn", fmt.Sprintf("Failed to click caption input: %v", err))
+		}
+
+		time.Sleep(300 * time.Millisecond)
+
+		// Normalize line endings
+		normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
+		normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
+
+		// Copy message to clipboard using JavaScript
+		Log("debug", "Copying caption to clipboard...")
+		jsCode := fmt.Sprintf(`navigator.clipboard.writeText(%s)`, escapeJSString(normalizedMessage))
+		err = chromedp.Run(c.ctx,
+			chromedp.Evaluate(jsCode, nil),
+			chromedp.Sleep(200*time.Millisecond),
+		)
+		if err != nil {
+			Log("warn", fmt.Sprintf("Failed to copy caption to clipboard: %v", err))
+		}
+
+		// Paste the caption using Ctrl+V (Cmd+V on Mac)
+		Log("debug", "Pasting caption from clipboard...")
+		err = chromedp.Run(c.ctx,
+			chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
+			chromedp.Sleep(500*time.Millisecond),
+		)
+		if err != nil {
+			Log("warn", fmt.Sprintf("Failed to paste caption: %v", err))
+		}
+
+		Log("info", "Caption added successfully")
+		time.Sleep(1 * time.Second)
+	} else {
+		Log("warn", "Could not find caption input - sending image without caption")
+	}
 
 	// Click the send button in the image preview modal
 	Log("info", "Looking for send button in image preview...")
