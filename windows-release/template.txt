@@ -1,6 +1,10 @@
-Hello {{.Name}}!
+🔥 SHABBAT LECH LECHA – The Journey Begins
 
-I wanted to let you know that your current value is {{.Value}}.
+Hello {{.Name}} how are you?This Saturday morning in Kips Bay. Time to follow in Avraham's footsteps (don't worry, no desert walking required 😄).
 
-Best regards,
-The Team
+Meaning, connection, and great vibes await. 🍹
+
+✨ Free participation
+
+📲 RSVP:
+https://wa.me/15102168856?text=Hi%20Yehouda%2C%20I%20would%20like%20to%20join%20for%20Shabbat%20morning%20Lech%20Lecha

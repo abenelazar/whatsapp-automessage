@@ -29,6 +29,7 @@ type FilesConfig struct {
 	CSVPath          string `yaml:"csv_path"`
 	TemplatePath     string `yaml:"template_path"`
 	CompletedCSVPath string `yaml:"completed_csv_path"`
+	ImagePath        string `yaml:"image_path"`
 }
 
 type RetryConfig struct {

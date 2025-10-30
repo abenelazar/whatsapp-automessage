@@ -208,6 +208,13 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 	Log("debug", fmt.Sprintf("Opening chat for %s", phoneNumber))
 
+	// Send image first if configured
+	if c.config.Files.ImagePath != "" {
+		if err := c.sendImage(phoneNumber, cleanNumber, chatURL); err != nil {
+			return fmt.Errorf("failed to send image: %w", err)
+		}
+	}
+
 	// Disable beforeunload event to prevent "Leave site?" dialog
 	err := chromedp.Run(c.ctx,
 		chromedp.Evaluate(`window.onbeforeunload = null;`, nil),
@@ -387,6 +394,116 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	time.Sleep(2 * time.Second)
 
 	Log("info", fmt.Sprintf("Message sent successfully to %s", phoneNumber))
+	return nil
+}
+
+// sendImage sends an image to a WhatsApp contact
+func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) error {
+	Log("info", fmt.Sprintf("Sending image to %s", phoneNumber))
+
+	// Verify image file exists
+	if _, err := os.Stat(c.config.Files.ImagePath); err != nil {
+		return fmt.Errorf("image file not found: %s", c.config.Files.ImagePath)
+	}
+
+	// Get absolute path for the image
+	absImagePath, err := filepath.Abs(c.config.Files.ImagePath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute image path: %w", err)
+	}
+	Log("debug", fmt.Sprintf("Using image at: %s", absImagePath))
+
+	// Navigate to chat
+	err = chromedp.Run(c.ctx,
+		chromedp.Evaluate(`window.onbeforeunload = null;`, nil),
+		chromedp.Navigate(chatURL),
+		chromedp.Sleep(3*time.Second),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to navigate to chat for image: %w", err)
+	}
+
+	// Click the attachment (paperclip) button
+	attachmentSelectors := []string{
+		`//div[@title='Attach']`,
+		`//span[@data-icon='plus']`,
+		`//span[@data-icon='clip']`,
+		`//div[contains(@aria-label, 'Attach')]`,
+	}
+
+	var attachmentClicked bool
+	for _, selector := range attachmentSelectors {
+		err = chromedp.Run(c.ctx,
+			chromedp.Click(selector, chromedp.BySearch),
+		)
+		if err == nil {
+			attachmentClicked = true
+			Log("debug", fmt.Sprintf("Clicked attachment button with selector: %s", selector))
+			break
+		}
+	}
+
+	if !attachmentClicked {
+		return fmt.Errorf("could not find attachment button")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Find and use the image/video file input
+	fileInputSelectors := []string{
+		`//input[@accept='image/*,video/mp4,video/3gpp,video/quicktime']`,
+		`//input[@type='file'][@accept*='image']`,
+		`//input[@type='file']`,
+	}
+
+	var fileInputFound bool
+	for _, selector := range fileInputSelectors {
+		err = chromedp.Run(c.ctx,
+			chromedp.SendKeys(selector, absImagePath, chromedp.BySearch),
+		)
+		if err == nil {
+			fileInputFound = true
+			Log("debug", fmt.Sprintf("Uploaded image with selector: %s", selector))
+			break
+		}
+	}
+
+	if !fileInputFound {
+		return fmt.Errorf("could not find file input for image upload")
+	}
+
+	// Wait for image to upload and preview to appear
+	Log("debug", "Waiting for image preview...")
+	time.Sleep(3 * time.Second)
+
+	// Click the send button
+	sendButtonSelectors := []string{
+		`//span[@data-icon='send']`,
+		`//button[@aria-label='Send']`,
+		`//div[@aria-label='Send']`,
+	}
+
+	var sendClicked bool
+	for _, selector := range sendButtonSelectors {
+		err = chromedp.Run(c.ctx,
+			chromedp.Click(selector, chromedp.BySearch),
+		)
+		if err == nil {
+			sendClicked = true
+			Log("debug", fmt.Sprintf("Clicked send button with selector: %s", selector))
+			break
+		}
+	}
+
+	if !sendClicked {
+		return fmt.Errorf("could not find send button for image")
+	}
+
+	// Wait for image to send
+	Log("debug", "Waiting for image to send...")
+	time.Sleep(4 * time.Second)
+
+	Log("info", fmt.Sprintf("Image sent successfully to %s", phoneNumber))
 	return nil
 }
 
