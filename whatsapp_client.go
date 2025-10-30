@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
@@ -651,125 +650,64 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Step 1: Copy image to clipboard using JavaScript
-	Log("info", "Step 1: Copying image to clipboard...")
-	base64Image := base64.StdEncoding.EncodeToString(imageData)
-
-	// Determine MIME type from file extension
-	mimeType := "image/png"
-	ext := strings.ToLower(filepath.Ext(absImagePath))
-	switch ext {
-	case ".jpg", ".jpeg":
-		mimeType = "image/jpeg"
-	case ".png":
-		mimeType = "image/png"
-	case ".gif":
-		mimeType = "image/gif"
-	case ".webp":
-		mimeType = "image/webp"
+	// Step 1: Click the attachment button to reveal file input
+	Log("info", "Step 1: Clicking attachment button...")
+	attachmentButtonSelectors := []string{
+		`//span[@data-icon='plus']`,
+		`//span[@data-icon='plus-rounded']`,
+		`//div[@title='Attach']`,
+		`//button[@aria-label='Attach']`,
 	}
 
-	// Use a simpler approach: set a global variable then read it back
-	// This avoids Promise unmarshaling issues
-	clipboardJS := fmt.Sprintf(`
-		(async function() {
-			try {
-				const base64Data = '%s';
-				const byteCharacters = atob(base64Data);
-				const byteNumbers = new Array(byteCharacters.length);
-				for (let i = 0; i < byteCharacters.length; i++) {
-					byteNumbers[i] = byteCharacters.charCodeAt(i);
-				}
-				const byteArray = new Uint8Array(byteNumbers);
-				const blob = new Blob([byteArray], { type: '%s' });
-
-				await navigator.clipboard.write([
-					new ClipboardItem({ '%s': blob })
-				]);
-
-				window._clipboardSuccess = true;
-				window._clipboardError = null;
-			} catch (e) {
-				console.error('Clipboard error:', e);
-				window._clipboardSuccess = false;
-				window._clipboardError = e.toString() + ' | ' + e.message;
-			}
-		})()
-	`, base64Image, mimeType, mimeType)
-
-	// Execute the async function
-	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(clipboardJS, nil),
-		chromedp.Sleep(1500*time.Millisecond), // Wait for async completion
-	)
-
-	if err != nil {
-		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
-		Log("error", fmt.Sprintf("Failed to execute clipboard code: %v", err))
-		return fmt.Errorf("failed to execute clipboard code: %w", err)
-	}
-
-	// Read back the result
-	var clipboardSuccess bool
-	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(`window._clipboardSuccess === true`, &clipboardSuccess),
-	)
-
-	if err != nil || !clipboardSuccess {
-		// Try to get the error message from the browser
-		var clipboardError string
-		chromedp.Run(c.ctx,
-			chromedp.Evaluate(`window._clipboardError || 'Unknown error'`, &clipboardError),
-		)
-
-		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
-		Log("error", fmt.Sprintf("Failed to copy image to clipboard. Browser error: %s, Go error: %v", clipboardError, err))
-		return fmt.Errorf("failed to copy image to clipboard: %s", clipboardError)
-	}
-
-	Log("info", "✓ Image copied to clipboard")
-
-	// Step 2: Click the message input box to focus it
-	Log("info", "Step 2: Finding and clicking message input box...")
-	messageInputSelectors := []string{
-		`//div[@contenteditable='true'][@data-tab='10']`,
-		`//div[@contenteditable='true'][@role='textbox']`,
-		`//div[@contenteditable='true']`,
-	}
-
-	var inputClicked bool
-	for _, selector := range messageInputSelectors {
+	var attachmentClicked bool
+	for _, selector := range attachmentButtonSelectors {
 		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
 		if err == nil {
-			inputClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked message input: %s", selector))
+			attachmentClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked attachment button: %s", selector))
 			break
 		}
 	}
 
-	if !inputClicked {
-		c.takeScreenshot(fmt.Sprintf("03_input_not_found_%s.png", cleanNumber))
-		return fmt.Errorf("could not find message input box")
+	if !attachmentClicked {
+		Log("warn", "Could not click attachment button, trying direct file input approach...")
+	} else {
+		time.Sleep(500 * time.Millisecond)
+		c.takeScreenshot(fmt.Sprintf("02_attachment_menu_%s.png", cleanNumber))
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Step 2: Find and use the file input element for images
+	Log("info", "Step 2: Looking for file input element...")
 
-	// Step 3: Paste the image using Ctrl/Cmd+V directly into the text box
-	Log("info", "Step 3: Pasting image into text box with Cmd/Ctrl+V...")
-	err = chromedp.Run(c.ctx,
-		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // Cmd/Ctrl+V
-		chromedp.Sleep(3*time.Second),
-	)
+	// WhatsApp uses hidden file input elements. We need to find one that accepts images
+	fileInputSelectors := []string{
+		`input[type='file'][accept*='image']`,
+		`input[type='file']`,
+	}
 
-	if err != nil {
-		c.takeScreenshot(fmt.Sprintf("04_paste_failed_%s.png", cleanNumber))
-		return fmt.Errorf("failed to paste image: %w", err)
+	var fileInputFound bool
+	for _, selector := range fileInputSelectors {
+		err = chromedp.Run(c.ctx,
+			chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.ByQuery),
+		)
+		if err == nil {
+			fileInputFound = true
+			Log("info", fmt.Sprintf("✓ Set file on input element: %s", selector))
+			break
+		}
+		Log("debug", fmt.Sprintf("Failed to set file on %s: %v", selector, err))
+	}
+
+	if !fileInputFound {
+		c.takeScreenshot(fmt.Sprintf("02_file_input_not_found_%s.png", cleanNumber))
+		Log("error", "Could not find file input element")
+		return fmt.Errorf("could not find file input element for image upload")
 	}
 
 	// Wait for image preview to appear
-	Log("info", "Waiting for image preview to load...")
-	time.Sleep(2 * time.Second)
-	c.takeScreenshot(fmt.Sprintf("05_image_preview_%s.png", cleanNumber))
+	Log("info", "Step 3: Waiting for image preview to load...")
+	time.Sleep(3 * time.Second)
+	c.takeScreenshot(fmt.Sprintf("03_image_preview_%s.png", cleanNumber))
 
 	// Add caption to the image
 	Log("info", "Adding caption to image...")
@@ -872,7 +810,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		Log("warn", "Could not find caption input - sending image without caption")
 	}
 
-	c.takeScreenshot(fmt.Sprintf("06_before_send_%s.png", cleanNumber))
+	c.takeScreenshot(fmt.Sprintf("04_before_send_%s.png", cleanNumber))
 
 	// Click the send button in the image preview modal
 	Log("info", "Looking for send button in image preview...")
