@@ -240,6 +240,10 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	Log("debug", "Waiting for chat to fully load...")
 	time.Sleep(2 * time.Second)
 
+	// Clean phone number for screenshot filename
+	cleanNumberForFile := strings.ReplaceAll(cleanNumber, "+", "")
+	c.takeScreenshot(fmt.Sprintf("text_01_chat_opened_%s.png", cleanNumberForFile))
+
 	// Count existing messages before we send (to verify new message was sent)
 	var messageCountBefore int
 	chromedp.Run(c.ctx,
@@ -347,10 +351,12 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	if err != nil {
 		Log("warn", fmt.Sprintf("Could not verify text was pasted: %v", err))
 	} else if len(inputText) == 0 {
+		c.takeScreenshot(fmt.Sprintf("text_02_paste_failed_%s.png", cleanNumberForFile))
 		Log("error", "Text was NOT pasted into input box - input is empty!")
 		return fmt.Errorf("failed to paste message into input box (input is empty)")
 	} else {
 		Log("info", fmt.Sprintf("Verified text pasted successfully (%d characters in input)", len(inputText)))
+		c.takeScreenshot(fmt.Sprintf("text_02_text_pasted_%s.png", cleanNumberForFile))
 	}
 
 	// Send the message by pressing Enter (without Shift modifier)
@@ -391,9 +397,12 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	}
 
 	if !messageSent {
+		c.takeScreenshot(fmt.Sprintf("text_03_send_failed_%s.png", cleanNumberForFile))
 		Log("error", fmt.Sprintf("Message was NOT sent to %s - message count did not increase after %v", phoneNumber, maxWaitTime))
 		return fmt.Errorf("message was not sent - no new message bubble appeared in chat")
 	}
+
+	c.takeScreenshot(fmt.Sprintf("text_03_message_sent_%s.png", cleanNumberForFile))
 
 	// Wait for checkmark to confirm message is being delivered
 	Log("info", "Waiting for delivery confirmation...")
@@ -457,6 +466,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	time.Sleep(2 * time.Second)
+	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
 	// Click the attachment button to open the attachment menu
 	Log("info", "Looking for attachment button...")
@@ -497,6 +507,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	if !attachmentClicked {
+		c.takeScreenshot(fmt.Sprintf("02_attachment_failed_%s.png", cleanNumber))
 		Log("error", "Could not click attachment button!")
 		return fmt.Errorf("could not find or click attachment button")
 	}
@@ -504,6 +515,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	// Wait for the attachment menu to appear
 	Log("info", "Waiting for attachment menu to appear...")
 	time.Sleep(2 * time.Second)
+	c.takeScreenshot(fmt.Sprintf("03_attachment_menu_%s.png", cleanNumber))
 
 	// Click on "Photos & Videos" option (NOT stickers) to ensure proper attachment mode
 	Log("info", "Looking for 'Photos & Videos' option in attachment menu...")
@@ -568,6 +580,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	}
 
 	if !photoVideoClicked {
+		c.takeScreenshot(fmt.Sprintf("04_photo_upload_failed_%s.png", cleanNumber))
 		Log("error", "Could not upload image via photos/videos option - tried all selectors")
 		return fmt.Errorf("could not find and click photos/videos option in attachment menu")
 	}
@@ -575,6 +588,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	// Wait for image to upload and preview to appear
 	Log("info", "Waiting for image preview to load...")
 	time.Sleep(4 * time.Second)
+	c.takeScreenshot(fmt.Sprintf("05_image_preview_%s.png", cleanNumber))
 
 	// Add caption to the image
 	Log("info", "Adding caption to image...")
@@ -659,6 +673,8 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	} else {
 		Log("warn", "Could not find caption input - sending image without caption")
 	}
+
+	c.takeScreenshot(fmt.Sprintf("06_before_send_%s.png", cleanNumber))
 
 	// Click the send button in the image preview modal
 	Log("info", "Looking for send button in image preview...")
@@ -776,4 +792,24 @@ func escapeJSString(s string) string {
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
 	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
 	return `"` + escaped + `"`
+}
+
+// takeScreenshot captures a screenshot and saves it to the screenshots directory
+func (c *WhatsAppClient) takeScreenshot(filename string) {
+	screenshotDir := "screenshots"
+	os.MkdirAll(screenshotDir, 0755)
+
+	screenshotPath := filepath.Join(screenshotDir, filename)
+	var buf []byte
+	if err := chromedp.Run(c.ctx, chromedp.FullScreenshot(&buf, 100)); err != nil {
+		Log("warn", fmt.Sprintf("Failed to take screenshot %s: %v", filename, err))
+		return
+	}
+
+	if err := os.WriteFile(screenshotPath, buf, 0644); err != nil {
+		Log("warn", fmt.Sprintf("Failed to save screenshot %s: %v", filename, err))
+		return
+	}
+
+	Log("info", fmt.Sprintf("📸 Screenshot saved: %s", screenshotPath))
 }
