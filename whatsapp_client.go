@@ -289,14 +289,22 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 	// Type the message with proper newline handling
 	// In WhatsApp Web, Enter sends the message, so we need to use Shift+Enter for newlines
-	lines := strings.Split(message, "\n")
+
+	// Normalize line endings - Windows uses \r\n, Unix uses \n
+	// Replace \r\n with \n, then remove any remaining \r
+	normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
+	normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
+
+	lines := strings.Split(normalizedMessage, "\n")
+	Log("debug", fmt.Sprintf("Message has %d lines", len(lines)))
 
 	for i, line := range lines {
 		if i > 0 {
 			// Send Shift+Enter for newline (not just Enter which would send the message)
+			Log("debug", fmt.Sprintf("Inserting newline before line %d", i+1))
 			err = chromedp.Run(c.ctx,
 				chromedp.KeyEvent("\n", chromedp.KeyModifiers(1)), // 1 = Shift modifier
-				chromedp.Sleep(50*time.Millisecond),
+				chromedp.Sleep(100*time.Millisecond),
 			)
 			if err != nil {
 				return fmt.Errorf("failed to insert newline: %w", err)
@@ -304,18 +312,22 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		}
 
 		if line != "" {
+			Log("debug", fmt.Sprintf("Typing line %d: %s", i+1, line))
 			err = chromedp.Run(c.ctx,
 				chromedp.SendKeys(usedSelector, line, chromedp.BySearch),
-				chromedp.Sleep(100*time.Millisecond),
+				chromedp.Sleep(150*time.Millisecond),
 			)
 			if err != nil {
 				return fmt.Errorf("failed to type message line: %w", err)
 			}
+		} else {
+			Log("debug", fmt.Sprintf("Line %d is empty (blank line)", i+1))
 		}
 	}
 
 	// Wait to ensure message is fully typed
-	time.Sleep(1 * time.Second)
+	Log("debug", "Message typing complete, waiting before sending...")
+	time.Sleep(1500 * time.Millisecond)
 
 	// Send the message by pressing Enter (without Shift modifier)
 	Log("debug", "Sending message with Enter key...")
