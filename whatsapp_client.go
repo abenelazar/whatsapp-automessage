@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,28 @@ func NewWhatsAppClient(config *Config) *WhatsAppClient {
 func (c *WhatsAppClient) Initialize() error {
 	Log("info", "Initializing browser automation...")
 
+	// Check network connectivity
+	Log("debug", "Checking network connectivity to WhatsApp Web...")
+	if err := checkNetworkConnectivity(); err != nil {
+		Log("warn", fmt.Sprintf("Network connectivity check failed: %v", err))
+		Log("warn", "Proceeding anyway, but you may experience connection issues")
+	} else {
+		Log("debug", "Network connectivity check passed")
+	}
+
+	// Validate Chrome path if specified
+	if c.config.Browser.ChromePath != "" {
+		if _, err := os.Stat(c.config.Browser.ChromePath); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("Chrome executable not found at: %s\nPlease check your chrome_path in config.yaml or remove it to use auto-detection", c.config.Browser.ChromePath)
+			}
+			return fmt.Errorf("cannot access Chrome executable at %s: %w", c.config.Browser.ChromePath, err)
+		}
+		Log("info", fmt.Sprintf("Using Chrome at: %s", c.config.Browser.ChromePath))
+	} else {
+		Log("info", "No Chrome path specified, using chromedp defaults")
+	}
+
 	// Ensure user data directory exists with proper permissions
 	if err := ensureUserDataDir(c.config.Browser.UserDataDir); err != nil {
 		return fmt.Errorf("failed to create user data directory: %w", err)
@@ -55,7 +78,6 @@ func (c *WhatsAppClient) Initialize() error {
 
 	// Add explicit Chrome path if configured or detected
 	if c.config.Browser.ChromePath != "" {
-		Log("info", fmt.Sprintf("Using Chrome at: %s", c.config.Browser.ChromePath))
 		opts = append(opts, chromedp.ExecPath(c.config.Browser.ChromePath))
 	}
 
@@ -65,23 +87,57 @@ func (c *WhatsAppClient) Initialize() error {
 
 	// Navigate to WhatsApp Web
 	Log("info", "Opening WhatsApp Web...")
+	Log("debug", "Starting Chrome browser process...")
 	err := chromedp.Run(c.ctx,
 		chromedp.Navigate("https://web.whatsapp.com"),
 	)
 	if err != nil {
+		Log("error", fmt.Sprintf("Chrome startup or navigation failed: %v", err))
+		// Provide helpful error messages based on common issues
+		if strings.Contains(err.Error(), "chrome failed to start") {
+			return fmt.Errorf("Chrome failed to start. Try:\n1. Close all Chrome windows\n2. Delete the chrome-data folder\n3. Check Chrome path in config.yaml\nError: %w", err)
+		}
+		if strings.Contains(err.Error(), "cannot find Chrome") || strings.Contains(err.Error(), "executable file not found") {
+			return fmt.Errorf("Chrome executable not found. Check chrome_path in config.yaml or reinstall Chrome.\nError: %w", err)
+		}
 		return fmt.Errorf("failed to navigate to WhatsApp Web: %w", err)
 	}
+	Log("info", "Chrome started and navigated to WhatsApp Web")
 
 	// Wait for login (either QR code scan or existing session)
 	Log("info", "Waiting for WhatsApp Web to load...")
+	Log("info", fmt.Sprintf("If you see a QR code, please scan it within %d seconds", c.config.Browser.QRTimeoutSeconds))
 
 	// Check if already logged in or wait for QR scan
 	timeoutCtx, timeoutCancel := context.WithTimeout(c.ctx, time.Duration(c.config.Browser.QRTimeoutSeconds)*time.Second)
 	defer timeoutCancel()
 
-	err = chromedp.Run(timeoutCtx,
-		chromedp.WaitVisible(`//div[@id='side']`, chromedp.BySearch),
-	)
+	// Add periodic status messages while waiting
+	done := make(chan error, 1)
+	go func() {
+		done <- chromedp.Run(timeoutCtx,
+			chromedp.WaitVisible(`//div[@id='side']`, chromedp.BySearch),
+		)
+	}()
+
+	// Show progress messages while waiting
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	startTime := time.Now()
+
+waitLoop:
+	for {
+		select {
+		case err = <-done:
+			break waitLoop
+		case <-ticker.C:
+			elapsed := time.Since(startTime).Seconds()
+			remaining := float64(c.config.Browser.QRTimeoutSeconds) - elapsed
+			if remaining > 0 {
+				Log("info", fmt.Sprintf("Still waiting for WhatsApp Web to load... (%.0f seconds remaining)", remaining))
+			}
+		}
+	}
 
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
@@ -319,6 +375,24 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	time.Sleep(2 * time.Second)
 
 	Log("info", fmt.Sprintf("Message sent successfully to %s", phoneNumber))
+	return nil
+}
+
+// checkNetworkConnectivity verifies we can reach WhatsApp Web
+func checkNetworkConnectivity() error {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+	resp, err := client.Get("https://web.whatsapp.com")
+	if err != nil {
+		return fmt.Errorf("cannot reach WhatsApp Web: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("WhatsApp Web returned server error: %d", resp.StatusCode)
+	}
+
 	return nil
 }
 
