@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,6 +19,7 @@ type Config struct {
 type BrowserConfig struct {
 	Headless           bool   `yaml:"headless"`
 	UserDataDir        string `yaml:"user_data_dir"`
+	ChromePath         string `yaml:"chrome_path"`
 	QRTimeoutSeconds   int    `yaml:"qr_timeout_seconds"`
 	PageLoadTimeout    int    `yaml:"page_load_timeout"`
 }
@@ -60,6 +62,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	if config.Browser.UserDataDir == "" {
 		config.Browser.UserDataDir = "./chrome-data"
 	}
+	if config.Browser.ChromePath == "" {
+		config.Browser.ChromePath = findChromePath()
+	}
 	if config.Browser.QRTimeoutSeconds == 0 {
 		config.Browser.QRTimeoutSeconds = 60
 	}
@@ -71,4 +76,25 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// findChromePath attempts to locate Chrome executable on the system
+func findChromePath() string {
+	if runtime.GOOS == "windows" {
+		// Common Chrome installation paths on Windows
+		paths := []string{
+			"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+			"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+			os.Getenv("LOCALAPPDATA") + "\\Google\\Chrome\\Application\\chrome.exe",
+		}
+
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
+	}
+
+	// Return empty string to use chromedp defaults for other OS or if not found
+	return ""
 }

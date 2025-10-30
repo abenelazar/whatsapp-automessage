@@ -5,6 +5,7 @@ browser:
   # Browser automation settings
   headless: false              # Set to true to run browser in background
   user_data_dir: "./chrome-data"  # Directory to store session data
+  chrome_path: ""              # Path to Chrome executable (auto-detected on Windows if empty)
   qr_timeout_seconds: 60       # Time to wait for QR code scan
   page_load_timeout: 30        # Timeout for page loads
 

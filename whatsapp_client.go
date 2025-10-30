@@ -53,6 +53,12 @@ func (c *WhatsAppClient) Initialize() error {
 		chromedp.WindowSize(1200, 800),
 	)
 
+	// Add explicit Chrome path if configured or detected
+	if c.config.Browser.ChromePath != "" {
+		Log("info", fmt.Sprintf("Using Chrome at: %s", c.config.Browser.ChromePath))
+		opts = append(opts, chromedp.ExecPath(c.config.Browser.ChromePath))
+	}
+
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	c.allocCancel = allocCancel
 	c.ctx, c.cancel = chromedp.NewContext(allocCtx)
