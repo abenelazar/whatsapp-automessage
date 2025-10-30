@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +35,11 @@ func NewWhatsAppClient(config *Config) *WhatsAppClient {
 
 func (c *WhatsAppClient) Initialize() error {
 	Log("info", "Initializing browser automation...")
+
+	// Ensure user data directory exists with proper permissions
+	if err := ensureUserDataDir(c.config.Browser.UserDataDir); err != nil {
+		return fmt.Errorf("failed to create user data directory: %w", err)
+	}
 
 	// Setup Chrome options
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
@@ -306,5 +313,39 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	time.Sleep(2 * time.Second)
 
 	Log("info", fmt.Sprintf("Message sent successfully to %s", phoneNumber))
+	return nil
+}
+
+// ensureUserDataDir creates the user data directory if it doesn't exist
+// and ensures it has proper permissions for Chrome to access
+func ensureUserDataDir(dirPath string) error {
+	// Convert to absolute path
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Check if directory exists
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Directory doesn't exist, create it
+			Log("info", fmt.Sprintf("Creating user data directory: %s", absPath))
+			if err := os.MkdirAll(absPath, 0755); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
+			Log("info", "User data directory created successfully")
+			return nil
+		}
+		return fmt.Errorf("failed to check directory: %w", err)
+	}
+
+	// Check if it's actually a directory
+	if !info.IsDir() {
+		return fmt.Errorf("path exists but is not a directory: %s", absPath)
+	}
+
+	// Directory exists and is valid
+	Log("info", fmt.Sprintf("Using existing user data directory: %s", absPath))
 	return nil
 }
