@@ -453,94 +453,60 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 	}
 
 	if !chatLoaded {
-		Log("warn", "Could not confirm chat loaded, proceeding anyway...")
+		return fmt.Errorf("chat did not load - cannot send image")
 	}
 
 	time.Sleep(2 * time.Second)
-	Log("info", "Looking for attachment button...")
 
-	// Click the attachment (paperclip) button
-	attachmentSelectors := []string{
-		`//div[@title='Attach']`,
-		`//button[@aria-label='Attach']`,
-		`//span[@data-icon='attach-menu-plus']`,
-		`//span[@data-icon='plus']`,
-		`//span[@data-icon='clip']`,
-		`//div[contains(@aria-label, 'Attach')]`,
-		`//div[@role='button' and @title='Attach']`,
-	}
-
-	var attachmentClicked bool
-	for i, selector := range attachmentSelectors {
-		Log("info", fmt.Sprintf("Trying attachment selector %d/%d...", i+1, len(attachmentSelectors)))
-		ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-		err = chromedp.Run(ctx,
-			chromedp.Click(selector, chromedp.BySearch),
-		)
-		cancel()
-		if err == nil {
-			attachmentClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked attachment button with selector: %s", selector))
-			break
-		} else {
-			Log("info", fmt.Sprintf("✗ Attachment selector %d failed: %v", i+1, err))
-		}
-	}
-
-	if !attachmentClicked {
-		Log("error", "Could not find attachment button after trying all selectors")
-		return fmt.Errorf("could not find attachment button")
-	}
-
-	time.Sleep(1 * time.Second)
-
-	// Find and use the image/video file input
-	Log("info", "Looking for file input...")
+	// Find the hidden file input directly - WhatsApp Web has these in the DOM
+	// We don't need to click the attachment button, we can use the input directly
+	Log("info", "Looking for file input element...")
 	fileInputSelectors := []string{
-		`//input[@accept='image/*,video/mp4,video/3gpp,video/quicktime']`,
-		`//input[@type='file'][@accept*='image']`,
-		`//input[@type='file']`,
+		`input[type="file"][accept*="image"]`,
+		`input[type="file"][accept*="video"]`,
+		`input[type="file"]`,
 	}
 
 	var fileInputFound bool
 	for i, selector := range fileInputSelectors {
-		Log("info", fmt.Sprintf("Trying file input selector %d/%d...", i+1, len(fileInputSelectors)))
-		ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+		Log("info", fmt.Sprintf("Trying file input selector %d/%d: %s", i+1, len(fileInputSelectors), selector))
+		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
 		err = chromedp.Run(ctx,
-			chromedp.SendKeys(selector, absImagePath, chromedp.BySearch),
+			chromedp.SendKeys(selector, absImagePath, chromedp.NodeVisible),
 		)
 		cancel()
 		if err == nil {
 			fileInputFound = true
-			Log("info", fmt.Sprintf("✓ Uploaded image with selector: %s", selector))
+			Log("info", fmt.Sprintf("✓ Successfully uploaded image using selector: %s", selector))
 			break
 		} else {
-			Log("info", fmt.Sprintf("✗ File input selector %d failed: %v", i+1, err))
+			Log("debug", fmt.Sprintf("✗ File input selector %d failed: %v", i+1, err))
 		}
 	}
 
 	if !fileInputFound {
-		Log("error", "Could not find file input after trying all selectors")
+		Log("error", "Could not find file input element after trying all selectors")
 		return fmt.Errorf("could not find file input for image upload")
 	}
 
 	// Wait for image to upload and preview to appear
-	Log("info", "Waiting for image preview to appear...")
+	Log("info", "Waiting for image preview to load...")
 	time.Sleep(4 * time.Second)
 
-	// Click the send button
-	Log("info", "Looking for send button...")
+	// Click the send button in the image preview modal
+	Log("info", "Looking for send button in image preview...")
 	sendButtonSelectors := []string{
 		`//span[@data-icon='send']`,
 		`//button[@aria-label='Send']`,
 		`//div[@aria-label='Send']`,
-		`//div[contains(@aria-label, 'Send')]`,
+		`//span[@data-icon='send']/ancestor::button`,
+		`//span[@data-icon='send']/parent::div[@role='button']`,
 	}
 
 	var sendClicked bool
 	for i, selector := range sendButtonSelectors {
 		Log("info", fmt.Sprintf("Trying send button selector %d/%d...", i+1, len(sendButtonSelectors)))
-		ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
 		err = chromedp.Run(ctx,
 			chromedp.Click(selector, chromedp.BySearch),
 		)
@@ -550,16 +516,16 @@ func (c *WhatsAppClient) sendImage(phoneNumber, cleanNumber, chatURL string) err
 			Log("info", fmt.Sprintf("✓ Clicked send button with selector: %s", selector))
 			break
 		} else {
-			Log("info", fmt.Sprintf("✗ Send button selector %d failed: %v", i+1, err))
+			Log("debug", fmt.Sprintf("✗ Send button selector %d failed: %v", i+1, err))
 		}
 	}
 
 	if !sendClicked {
-		Log("error", "Could not find send button after trying all selectors")
+		Log("error", "Could not find send button in image preview")
 		return fmt.Errorf("could not find send button for image")
 	}
 
-	// Wait for image to send - give it more time for upload and delivery
+	// Wait for image to send - give it time for upload and delivery
 	Log("info", "Waiting for image to upload and send...")
 	time.Sleep(8 * time.Second)
 
