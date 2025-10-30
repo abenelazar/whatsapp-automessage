@@ -274,7 +274,7 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		return fmt.Errorf("could not find message input box (chat may not have loaded)")
 	}
 
-	Log("debug", "Typing message...")
+	Log("debug", "Preparing to paste message...")
 
 	// Click the input box to focus it
 	err = chromedp.Run(c.ctx,
@@ -297,47 +297,35 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		Log("warn", fmt.Sprintf("Failed to clear existing text: %v", err))
 	}
 
-	// Type the message with proper newline handling
-	// In WhatsApp Web, Enter sends the message, so we need to use Shift+Enter for newlines
-
 	// Normalize line endings - Windows uses \r\n, Unix uses \n
 	// Replace \r\n with \n, then remove any remaining \r
 	normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
 	normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
 
-	lines := strings.Split(normalizedMessage, "\n")
-	Log("debug", fmt.Sprintf("Message has %d lines", len(lines)))
-
-	for i, line := range lines {
-		if i > 0 {
-			// Send Shift+Enter for newline (not just Enter which would send the message)
-			Log("debug", fmt.Sprintf("Inserting newline before line %d", i+1))
-			err = chromedp.Run(c.ctx,
-				chromedp.KeyEvent("\n", chromedp.KeyModifiers(1)), // 1 = Shift modifier
-				chromedp.Sleep(100*time.Millisecond),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to insert newline: %w", err)
-			}
-		}
-
-		if line != "" {
-			Log("debug", fmt.Sprintf("Typing line %d: %s", i+1, line))
-			err = chromedp.Run(c.ctx,
-				chromedp.SendKeys(usedSelector, line, chromedp.BySearch),
-				chromedp.Sleep(150*time.Millisecond),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to type message line: %w", err)
-			}
-		} else {
-			Log("debug", fmt.Sprintf("Line %d is empty (blank line)", i+1))
-		}
+	// Copy message to clipboard using JavaScript
+	Log("debug", "Copying message to clipboard...")
+	jsCode := fmt.Sprintf(`navigator.clipboard.writeText(%s)`, escapeJSString(normalizedMessage))
+	err = chromedp.Run(c.ctx,
+		chromedp.Evaluate(jsCode, nil),
+		chromedp.Sleep(200*time.Millisecond),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to copy message to clipboard: %w", err)
 	}
 
-	// Wait to ensure message is fully typed
-	Log("debug", "Message typing complete, waiting before sending...")
-	time.Sleep(1500 * time.Millisecond)
+	// Paste the message using Ctrl+V (Cmd+V on Mac)
+	Log("debug", "Pasting message from clipboard...")
+	err = chromedp.Run(c.ctx,
+		chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
+		chromedp.Sleep(500*time.Millisecond),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to paste message: %w", err)
+	}
+
+	// Wait to ensure message is fully pasted
+	Log("debug", "Message paste complete, waiting before sending...")
+	time.Sleep(500 * time.Millisecond)
 
 	// Send the message by pressing Enter (without Shift modifier)
 	Log("debug", "Sending message with Enter key...")
@@ -595,4 +583,18 @@ func ensureUserDataDir(dirPath string) error {
 	Log("debug", "Directory write test passed")
 
 	return nil
+}
+
+// escapeJSString escapes a string for safe use in JavaScript code
+func escapeJSString(s string) string {
+	// Use JSON encoding which properly escapes quotes, newlines, backslashes, etc.
+	// and wraps the string in quotes
+	escaped := strings.ReplaceAll(s, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "`", "\\`")
+	escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+	escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+	escaped = strings.ReplaceAll(escaped, "\t", "\\t")
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	return `"` + escaped + `"`
 }
