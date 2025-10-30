@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -668,136 +666,64 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Step 1: Copy image to system clipboard using osascript (Mac) or PowerShell (Windows)
-	Log("info", "Step 1: Copying image to system clipboard...")
-
-	// Detect OS and use appropriate clipboard command
-	var clipboardCmd *exec.Cmd
-	if runtime.GOOS == "darwin" {
-		// macOS: Use osascript to copy image to clipboard
-		// Determine image type from extension
-		ext := strings.ToLower(filepath.Ext(absImagePath))
-		var imageClass string
-		switch ext {
-		case ".png":
-			imageClass = "«class PNGf»"
-		case ".jpg", ".jpeg":
-			imageClass = "JPEG picture"
-		case ".gif":
-			imageClass = "GIF picture"
-		case ".tiff", ".tif":
-			imageClass = "TIFF picture"
-		default:
-			// Default to PNG for unknown types
-			imageClass = "«class PNGf»"
-		}
-
-		script := fmt.Sprintf(`set the clipboard to (read (POSIX file "%s") as %s)`, absImagePath, imageClass)
-		clipboardCmd = exec.Command("osascript", "-e", script)
-	} else if runtime.GOOS == "windows" {
-		// Windows: Use PowerShell to copy image to clipboard
-		psScript := fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('%s'))`, absImagePath)
-		clipboardCmd = exec.Command("powershell", "-Command", psScript)
-	} else {
-		Log("error", "Unsupported OS for clipboard operations")
-		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	// Step 1: Click the attachment (+) button
+	Log("info", "Step 1: Clicking attachment button...")
+	attachmentSelectors := []string{
+		`//span[@data-icon='plus']`,
+		`//span[@data-icon='plus-rounded']`,
+		`//div[@title='Attach']`,
+		`//button[@aria-label='Attach']`,
 	}
 
-	// Execute clipboard command
-	clipboardOutput, err := clipboardCmd.CombinedOutput()
-	if err != nil {
-		Log("error", fmt.Sprintf("Failed to copy image to system clipboard: %v, output: %s", err, string(clipboardOutput)))
-		c.takeScreenshot(fmt.Sprintf("02_clipboard_failed_%s.png", cleanNumber))
-		return fmt.Errorf("failed to copy image to system clipboard: %w", err)
-	}
-
-	Log("info", "✓ Image copied to system clipboard")
-	time.Sleep(500 * time.Millisecond)
-
-	// Step 2: Click the message input box to focus it
-	Log("info", "Step 2: Clicking message input box...")
-	messageInputSelectors := []string{
-		`//div[@contenteditable='true'][@data-tab='10']`,
-		`//div[@contenteditable='true'][@role='textbox']`,
-		`//div[@contenteditable='true']`,
-	}
-
-	var inputClicked bool
-	for _, selector := range messageInputSelectors {
+	var attachmentClicked bool
+	for _, selector := range attachmentSelectors {
 		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
 		if err == nil {
-			inputClicked = true
-			Log("info", fmt.Sprintf("✓ Clicked message input: %s", selector))
+			attachmentClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked attachment button: %s", selector))
 			break
 		}
+		Log("debug", fmt.Sprintf("Attachment button selector failed: %s", selector))
 	}
 
-	if !inputClicked {
-		c.takeScreenshot(fmt.Sprintf("02_input_not_found_%s.png", cleanNumber))
-		return fmt.Errorf("could not find message input box")
-	}
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Step 3: Paste the image using JavaScript paste event
-	Log("info", "Step 3: Triggering paste event on message input...")
-
-	// Use JavaScript to trigger a paste event on the focused input
-	// This simulates what happens when user pastes from clipboard
-	pasteJS := `
-(function() {
-	try {
-		// Get the focused element (should be our input box)
-		const el = document.activeElement;
-		if (!el) {
-			console.error('No active element');
-			return false;
-		}
-
-		// Create and dispatch a paste event
-		const pasteEvent = new ClipboardEvent('paste', {
-			bubbles: true,
-			cancelable: true,
-			composed: true
-		});
-
-		el.dispatchEvent(pasteEvent);
-		return true;
-	} catch (e) {
-		console.error('Paste event error:', e);
-		return false;
-	}
-})()
-`
-
-	var pasteTriggered bool
-	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(pasteJS, &pasteTriggered),
-	)
-
-	if err != nil || !pasteTriggered {
-		Log("warn", fmt.Sprintf("JavaScript paste event failed: %v, triggered: %v", err, pasteTriggered))
-		Log("info", "Trying keyboard shortcut fallback...")
-
-		// Fallback: Try actual keyboard shortcut via osascript
-		var pasteCmd *exec.Cmd
-		if runtime.GOOS == "darwin" {
-			pasteScript := `tell application "Google Chrome" to activate
-delay 0.3
-tell application "System Events"
-	keystroke "v" using command down
-end tell`
-			pasteCmd = exec.Command("osascript", "-e", pasteScript)
-			pasteOutput, err := pasteCmd.CombinedOutput()
-			if err != nil {
-				Log("error", fmt.Sprintf("Keyboard shortcut failed: %v, output: %s", err, string(pasteOutput)))
-			}
-		}
+	if !attachmentClicked {
+		Log("warn", "Could not click attachment button, will try direct file input")
 	} else {
-		Log("info", "✓ Paste event triggered successfully")
+		time.Sleep(1 * time.Second)
+		c.takeScreenshot(fmt.Sprintf("02_attachment_menu_%s.png", cleanNumber))
 	}
 
-	time.Sleep(3 * time.Second)
+	// Step 2: Find and set file on the hidden file input element
+	Log("info", "Step 2: Finding file input element...")
+
+	// WhatsApp uses hidden file input elements for uploads
+	fileInputSelectors := []string{
+		`input[type='file'][accept*='image']`,
+		`input[type='file'][accept*='*']`,
+		`input[type='file']`,
+	}
+
+	var fileInputSet bool
+	for _, selector := range fileInputSelectors {
+		Log("debug", fmt.Sprintf("Trying file input selector: %s", selector))
+		err = chromedp.Run(c.ctx,
+			chromedp.SetUploadFiles(selector, []string{absImagePath}, chromedp.ByQuery),
+		)
+		if err == nil {
+			fileInputSet = true
+			Log("info", fmt.Sprintf("✓ Set file on input element: %s", selector))
+			break
+		}
+		Log("debug", fmt.Sprintf("File input selector failed: %s, error: %v", selector, err))
+	}
+
+	if !fileInputSet {
+		c.takeScreenshot(fmt.Sprintf("02_file_input_not_found_%s.png", cleanNumber))
+		Log("error", "Could not find file input element")
+		return fmt.Errorf("could not find file input element for image upload")
+	}
+
+	time.Sleep(2 * time.Second)
 
 	// Wait for image preview to appear
 	Log("info", "Waiting for image preview to load...")
