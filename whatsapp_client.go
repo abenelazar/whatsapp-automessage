@@ -361,78 +361,95 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	normalizedMessage := strings.ReplaceAll(message, "\r\n", "\n")
 	normalizedMessage = strings.ReplaceAll(normalizedMessage, "\r", "\n")
 
-	// Try Method 1: Clipboard paste (preferred method)
-	Log("debug", "Method 1: Trying clipboard paste...")
+	// Method 1: Use chromedp's SendKeys (simulates actual keyboard typing)
+	Log("info", "Method 1: Trying SendKeys (simulated typing)...")
 	var textPasted bool
 
-	// Copy message to clipboard using JavaScript
-	jsCode := fmt.Sprintf(`navigator.clipboard.writeText(%s)`, escapeJSString(normalizedMessage))
 	err = chromedp.Run(c.ctx,
-		chromedp.Evaluate(jsCode, nil),
-		chromedp.Sleep(200*time.Millisecond),
+		chromedp.SendKeys(usedSelector, normalizedMessage, chromedp.BySearch),
+		chromedp.Sleep(1*time.Second),
 	)
+
 	if err != nil {
-		Log("warn", fmt.Sprintf("Failed to copy to clipboard: %v, will try direct input", err))
+		Log("warn", fmt.Sprintf("SendKeys failed: %v, trying advanced DOM method", err))
 	} else {
-		// Paste the message using Ctrl+V (Cmd+V on Mac)
-		err = chromedp.Run(c.ctx,
-			chromedp.KeyEvent("v", chromedp.KeyModifiers(2)), // 2 = Cmd/Ctrl modifier
-			chromedp.Sleep(500*time.Millisecond),
+		// Verify that text was typed
+		var inputText string
+		chromedp.Run(c.ctx,
+			chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
 		)
-		if err != nil {
-			Log("warn", fmt.Sprintf("Failed to paste from clipboard: %v, will try direct input", err))
+		if len(inputText) > 0 {
+			textPasted = true
+			Log("info", fmt.Sprintf("✓ SendKeys successful (%d characters typed)", len(inputText)))
 		} else {
-			// Verify that text was pasted
-			var inputText string
-			chromedp.Run(c.ctx,
-				chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
-			)
-			if len(inputText) > 0 {
-				textPasted = true
-				Log("info", fmt.Sprintf("✓ Clipboard paste successful (%d characters)", len(inputText)))
-			}
+			Log("warn", "SendKeys reported success but input is empty, trying advanced method...")
 		}
 	}
 
-	// Method 2: Direct DOM manipulation (fallback)
+	// Method 2: Advanced DOM manipulation with proper WhatsApp structure
 	if !textPasted {
-		Log("warn", "Clipboard paste failed or empty, trying direct DOM manipulation...")
+		Log("info", "Method 2: Trying advanced DOM manipulation with WhatsApp structure...")
 
-		// Use JavaScript to directly insert text into the contenteditable div
-		escapedMsg := escapeJSString(normalizedMessage)
-		directInputJS := fmt.Sprintf(`
+		// Split message into lines for proper paragraph structure
+		lines := strings.Split(normalizedMessage, "\n")
+		var htmlContent string
+		for _, line := range lines {
+			if line == "" {
+				htmlContent += "<br>"
+			} else {
+				// Escape HTML but preserve the structure
+				escapedLine := strings.ReplaceAll(line, "&", "&amp;")
+				escapedLine = strings.ReplaceAll(escapedLine, "<", "&lt;")
+				escapedLine = strings.ReplaceAll(escapedLine, ">", "&gt;")
+				htmlContent += fmt.Sprintf("<div>%s</div>", escapedLine)
+			}
+		}
+
+		advancedInputJS := fmt.Sprintf(`
 			(function() {
 				const inputBox = document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
 				                 document.querySelector('div[contenteditable="true"][role="textbox"]');
 				if (!inputBox) return false;
 
-				// Set the text content
-				inputBox.textContent = %s;
+				// Clear existing content
+				inputBox.innerHTML = '';
 
-				// Trigger input event to notify WhatsApp
-				const inputEvent = new Event('input', { bubbles: true });
-				inputBox.dispatchEvent(inputEvent);
+				// Set HTML content with proper structure
+				inputBox.innerHTML = %s;
 
-				// Focus the input
+				// Move cursor to end
+				const range = document.createRange();
+				const selection = window.getSelection();
+				range.selectNodeContents(inputBox);
+				range.collapse(false);
+				selection.removeAllRanges();
+				selection.addRange(range);
+
+				// Fire comprehensive event chain
 				inputBox.focus();
+				inputBox.dispatchEvent(new Event('focus', { bubbles: true }));
+				inputBox.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true }));
+				inputBox.dispatchEvent(new InputEvent('input', { bubbles: true }));
+				inputBox.dispatchEvent(new Event('keyup', { bubbles: true }));
+				inputBox.dispatchEvent(new Event('change', { bubbles: true }));
 
 				return true;
 			})()
-		`, escapedMsg)
+		`, escapeJSString(htmlContent))
 
-		var directInputSuccess bool
+		var advancedSuccess bool
 		err = chromedp.Run(c.ctx,
-			chromedp.Evaluate(directInputJS, &directInputSuccess),
-			chromedp.Sleep(500*time.Millisecond),
+			chromedp.Evaluate(advancedInputJS, &advancedSuccess),
+			chromedp.Sleep(800*time.Millisecond),
 		)
 
-		if err != nil || !directInputSuccess {
-			c.takeScreenshot(fmt.Sprintf("text_02_paste_failed_%s.png", cleanNumberForFile))
-			Log("error", "Both clipboard paste AND direct input failed!")
-			return fmt.Errorf("failed to input message using both clipboard and direct methods")
+		if err != nil || !advancedSuccess {
+			c.takeScreenshot(fmt.Sprintf("text_02_all_methods_failed_%s.png", cleanNumberForFile))
+			Log("error", "All text input methods failed!")
+			return fmt.Errorf("failed to input message using all available methods")
 		}
 
-		Log("info", "✓ Direct DOM input successful")
+		Log("info", "✓ Advanced DOM manipulation successful")
 		textPasted = true
 	}
 
