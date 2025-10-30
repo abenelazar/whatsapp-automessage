@@ -367,13 +367,29 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 	Log("info", "Method 1: Typing message with keyboard simulation...")
 	var textPasted bool
 
-	// Split message by newlines and send each part separately with Shift+Enter between them
+	// Split message by newlines
 	lines := strings.Split(normalizedMessage, "\n")
 
+	// Remove consecutive empty lines (which cause double spacing)
+	var filteredLines []string
+	lastWasEmpty := false
+	for _, line := range lines {
+		if line == "" {
+			if !lastWasEmpty {
+				filteredLines = append(filteredLines, line)
+			}
+			lastWasEmpty = true
+		} else {
+			filteredLines = append(filteredLines, line)
+			lastWasEmpty = false
+		}
+	}
+	lines = filteredLines
+
+	// Type each line with Shift+Enter between them
 	for i, line := range lines {
 		if i > 0 {
 			// Send Shift+Enter for newline (Enter alone sends the message in WhatsApp)
-			// Modifier 8 = Shift (1 << 3)
 			err = chromedp.Run(c.ctx,
 				chromedp.KeyEvent("\r", chromedp.KeyModifiers(8)),
 				chromedp.Sleep(50*time.Millisecond),
@@ -384,14 +400,14 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 			}
 		}
 
-		// Type this line
+		// Type this line (even if empty, to maintain spacing)
 		if line != "" {
 			err = chromedp.Run(c.ctx,
 				chromedp.SendKeys(usedSelector, line, chromedp.BySearch, chromedp.NodeNotVisible),
 				chromedp.Sleep(50*time.Millisecond),
 			)
 			if err != nil {
-				Log("warn", fmt.Sprintf("Failed to type line %d: %v", i+1, err))
+				Log("warn", fmt.Sprintf("Failed to type line: %v", err))
 				break
 			}
 		}
@@ -869,10 +885,25 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		Log("info", "Typing caption with keyboard simulation...")
 		captionLines := strings.Split(normalizedCaption, "\n")
 
+		// Remove consecutive empty lines (which cause double spacing)
+		var filteredCaptionLines []string
+		lastWasEmpty := false
+		for _, line := range captionLines {
+			if line == "" {
+				if !lastWasEmpty {
+					filteredCaptionLines = append(filteredCaptionLines, line)
+				}
+				lastWasEmpty = true
+			} else {
+				filteredCaptionLines = append(filteredCaptionLines, line)
+				lastWasEmpty = false
+			}
+		}
+		captionLines = filteredCaptionLines
+
 		for i, line := range captionLines {
 			if i > 0 {
 				// Send Shift+Enter for newline
-				// Modifier 8 = Shift (1 << 3)
 				err = chromedp.Run(c.ctx,
 					chromedp.KeyEvent("\r", chromedp.KeyModifiers(8)),
 					chromedp.Sleep(50*time.Millisecond),
@@ -897,7 +928,7 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 					)
 				}
 				if err != nil {
-					Log("warn", fmt.Sprintf("Failed to type caption line %d: %v", i+1, err))
+					Log("warn", fmt.Sprintf("Failed to type caption line: %v", err))
 					break
 				}
 			}
