@@ -238,10 +238,52 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 
 	// Wait for chat to fully load and "Starting chat" dialog to disappear
 	Log("debug", "Waiting for chat to fully load...")
-	time.Sleep(2 * time.Second)
 
 	// Clean phone number for screenshot filename
 	cleanNumberForFile := strings.ReplaceAll(cleanNumber, "+", "")
+
+	// Explicitly wait for "Starting chat" spinner/dialog to disappear
+	Log("info", "Waiting for 'Starting chat' dialog to disappear...")
+	maxStartWait := 15 * time.Second
+	startWaitBegin := time.Now()
+	dialogGone := false
+
+	for time.Since(startWaitBegin) < maxStartWait {
+		var spinnerVisible bool
+		err = chromedp.Run(c.ctx,
+			chromedp.Evaluate(`
+				(function() {
+					// Check for "Starting chat" text or spinner
+					const startingText = Array.from(document.querySelectorAll('div, span')).find(el =>
+						el.textContent.includes('Starting chat') || el.textContent.includes('starting chat')
+					);
+					if (startingText && startingText.offsetParent !== null) return true;
+
+					// Check for loading spinners
+					const spinner = document.querySelector('div[role="progressbar"]');
+					if (spinner && spinner.offsetParent !== null) return true;
+
+					return false;
+				})()
+			`, &spinnerVisible),
+		)
+
+		if err != nil || !spinnerVisible {
+			dialogGone = true
+			Log("info", "✓ 'Starting chat' dialog is gone")
+			break
+		}
+
+		Log("debug", fmt.Sprintf("'Starting chat' dialog still visible, waiting... (%v elapsed)", time.Since(startWaitBegin).Round(time.Second)))
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if !dialogGone {
+		Log("warn", "Timed out waiting for 'Starting chat' dialog to disappear, proceeding anyway...")
+	}
+
+	// Additional wait to ensure UI is stable
+	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("text_01_chat_opened_%s.png", cleanNumberForFile))
 
 	// Count existing messages before we send (to verify new message was sent)
@@ -465,7 +507,47 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 		return fmt.Errorf("chat did not load - cannot send image")
 	}
 
-	time.Sleep(2 * time.Second)
+	// Explicitly wait for "Starting chat" spinner/dialog to disappear
+	Log("info", "Waiting for 'Starting chat' dialog to disappear...")
+	maxStartWait := 15 * time.Second
+	startWaitBegin := time.Now()
+	dialogGone := false
+
+	for time.Since(startWaitBegin) < maxStartWait {
+		var spinnerVisible bool
+		err = chromedp.Run(c.ctx,
+			chromedp.Evaluate(`
+				(function() {
+					// Check for "Starting chat" text or spinner
+					const startingText = Array.from(document.querySelectorAll('div, span')).find(el =>
+						el.textContent.includes('Starting chat') || el.textContent.includes('starting chat')
+					);
+					if (startingText && startingText.offsetParent !== null) return true;
+
+					// Check for loading spinners
+					const spinner = document.querySelector('div[role="progressbar"]');
+					if (spinner && spinner.offsetParent !== null) return true;
+
+					return false;
+				})()
+			`, &spinnerVisible),
+		)
+
+		if err != nil || !spinnerVisible {
+			dialogGone = true
+			Log("info", "✓ 'Starting chat' dialog is gone")
+			break
+		}
+
+		Log("debug", fmt.Sprintf("'Starting chat' dialog still visible, waiting... (%v elapsed)", time.Since(startWaitBegin).Round(time.Second)))
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if !dialogGone {
+		Log("warn", "Timed out waiting for 'Starting chat' dialog to disappear, proceeding anyway...")
+	}
+
+	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
 	// Click the attachment button to open the attachment menu
