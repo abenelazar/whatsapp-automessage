@@ -666,6 +666,25 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
+	// Close any blocking dialogs (like "Share on WhatsApp" popup)
+	Log("info", "Checking for and closing any blocking dialogs...")
+	closeButtonSelectors := []string{
+		`//button[@aria-label='Close']`,
+		`//div[@role='button'][@aria-label='Close']`,
+		`//span[@data-icon='x']`,
+		`//span[@data-icon='x-viewer']`,
+		`[aria-label='Close']`,
+	}
+
+	for _, selector := range closeButtonSelectors {
+		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
+		if err == nil {
+			Log("info", "✓ Closed blocking dialog")
+			time.Sleep(500 * time.Millisecond)
+			break
+		}
+	}
+
 	// Step 1: Click attachment button first to ensure proper input is available
 	Log("info", "Step 1: Clicking attachment (+) button...")
 	attachmentSelectors := []string{
