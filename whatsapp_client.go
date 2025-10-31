@@ -666,16 +666,72 @@ func (c *WhatsAppClient) sendImageWithCaption(phoneNumber, cleanNumber, chatURL,
 	time.Sleep(1 * time.Second)
 	c.takeScreenshot(fmt.Sprintf("01_chat_loaded_%s.png", cleanNumber))
 
-	// Step 1: Find and set file directly on the hidden file input element
-	// Skip clicking attachment button - file input should already exist
-	Log("info", "Step 1: Finding file input element for direct upload...")
+	// Step 1: Click attachment button first to ensure proper input is available
+	Log("info", "Step 1: Clicking attachment (+) button...")
+	attachmentSelectors := []string{
+		`//span[@data-icon='plus']`,
+		`//span[@data-icon='plus-rounded']`,
+		`//span[@data-icon='attach-menu-plus']`,
+		`//div[@title='Attach']`,
+		`//button[@aria-label='Attach']`,
+	}
 
-	// WhatsApp uses hidden file input elements for uploads
-	// Try multiple selectors to find the right one
+	var attachmentClicked bool
+	for _, selector := range attachmentSelectors {
+		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
+		if err == nil {
+			attachmentClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked attachment button: %s", selector))
+			break
+		}
+		Log("debug", fmt.Sprintf("Attachment selector failed: %s", selector))
+	}
+
+	if !attachmentClicked {
+		Log("warn", "Could not click attachment button")
+		c.takeScreenshot(fmt.Sprintf("02_attachment_not_clicked_%s.png", cleanNumber))
+		return fmt.Errorf("could not click attachment button")
+	}
+
+	time.Sleep(1 * time.Second)
+	c.takeScreenshot(fmt.Sprintf("02_attachment_menu_%s.png", cleanNumber))
+
+	// Step 2: Click "Photos & Videos" option (2nd item in menu)
+	Log("info", "Step 2: Clicking 'Photos & Videos' menu option...")
+	photoVideoSelectors := []string{
+		`//span[contains(text(), 'Photos')]/ancestor::li`,
+		`//li[@data-tab='3']`,
+		`//span[@data-icon='image']/ancestor::li`,
+		`//li[contains(@class, 'menu-item')][2]`,
+		`(//ul[@role='menu']//li[@role='menuitem'])[2]`,
+	}
+
+	var photoClicked bool
+	for _, selector := range photoVideoSelectors {
+		err = chromedp.Run(c.ctx, chromedp.Click(selector, chromedp.BySearch))
+		if err == nil {
+			photoClicked = true
+			Log("info", fmt.Sprintf("✓ Clicked Photos & Videos: %s", selector))
+			break
+		}
+		Log("debug", fmt.Sprintf("Photos selector failed: %s", selector))
+	}
+
+	if !photoClicked {
+		Log("warn", "Could not click Photos & Videos menu item, trying direct file input...")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 3: Find and set file on the Photos/Videos file input
+	Log("info", "Step 3: Finding Photos & Videos file input element...")
+
+	// WhatsApp has multiple file inputs - we need the one for Photos/Videos (not stickers/documents)
+	// The Photos input typically accepts: image/*,video/mp4,video/3gpp,video/quicktime
 	fileInputSelectors := []string{
-		`input[type='file'][accept*='image']`,
 		`input[type='file'][accept='image/*,video/mp4,video/3gpp,video/quicktime']`,
-		`input[type='file']`,
+		`input[type='file'][accept*='video'][accept*='image']`,
+		`input[type='file'][accept*='image/*']`,
 	}
 
 	var fileInputSet bool
