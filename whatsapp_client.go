@@ -417,8 +417,14 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		time.Sleep(300 * time.Millisecond)
 		var inputText string
 		chromedp.Run(c.ctx,
-			chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &inputText),
+			chromedp.Evaluate(`
+				const input = document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
+				              document.querySelector('div[contenteditable="true"][role="textbox"]');
+				if (!input) { '' }
+				else { input.innerText || input.textContent || input.innerHTML?.replace(/<[^>]*>/g, '') || '' }
+			`, &inputText),
 		)
+		inputText = strings.TrimSpace(inputText)
 		if len(inputText) > 0 {
 			textPasted = true
 			Log("info", fmt.Sprintf("✓ Keyboard typing successful (%d characters typed)", len(inputText)))
@@ -494,12 +500,20 @@ func (c *WhatsAppClient) sendMessageAttempt(phoneNumber, message string) error {
 		textPasted = true
 	}
 
-	// Final verification
+	// Final verification - try multiple properties to read the input
 	time.Sleep(300 * time.Millisecond)
 	var finalInputText string
 	chromedp.Run(c.ctx,
-		chromedp.Evaluate(`document.querySelector('div[contenteditable="true"][data-tab="10"]')?.textContent || document.querySelector('div[contenteditable="true"][role="textbox"]')?.textContent || ""`, &finalInputText),
+		chromedp.Evaluate(`
+			const input = document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
+			              document.querySelector('div[contenteditable="true"][role="textbox"]');
+			if (!input) { '' }
+			else { input.innerText || input.textContent || input.innerHTML?.replace(/<[^>]*>/g, '') || '' }
+		`, &finalInputText),
 	)
+
+	// Trim whitespace for verification
+	finalInputText = strings.TrimSpace(finalInputText)
 
 	if len(finalInputText) == 0 {
 		c.takeScreenshot(fmt.Sprintf("text_02_input_verification_failed_%s.png", cleanNumberForFile))
